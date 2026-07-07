@@ -116,6 +116,25 @@ int GC0328C_ReadSccb(uint8_t sub_addr, uint8_t *data)
 	sensor_Private *priv = GC0328C_SensorGetPriv();
 	return HAL_I2C_SCCB_Master_Receive_IT(priv->i2c_id, GC0328C_SCCB_ID, sub_addr, data);
 }
+static int GC0328C_WriteRegWithRetry(uint16_t index, uint8_t reg, uint8_t val, const char *phase)
+{
+	int attempt;
+
+	for (attempt = 1; attempt <= 4; attempt++) {
+		if (GC0328C_WriteSccb(reg, val) == 1) {
+			if (reg == 0xfe && val == 0x80)
+				OS_MSleep(10);
+			else if (reg == 0xfc && val == 0x16)
+				OS_MSleep(1);
+			return 1;
+		}
+		GC0328C_LOGW("GC0328C %s[%u] write failed reg=0x%02x val=0x%02x attempt=%d\n",
+		            phase, (unsigned int)index, reg, val, attempt);
+		OS_MSleep(2);
+	}
+
+	return 0;
+}
 
 /**
   * @brief Set the effects for camera.
@@ -347,24 +366,44 @@ void GC0328C_SetPixelOutFmt(SENSOR_PixelOutFmt pixel_out_fmt)
 static void GC0328C_InitPower(SENSOR_PowerCtrlCfg *cfg)
 {
 	GPIO_InitParam param;
+	uint8_t same_pin;
+
 	param.driving = GPIO_DRIVING_LEVEL_1;
 	param.mode = GPIOx_Pn_F1_OUTPUT;
 	param.pull = GPIO_PULL_NONE;
 
+	same_pin = (cfg->Pwdn_Port == cfg->Reset_Port) && (cfg->Pwdn_Pin == cfg->Reset_Pin);
 	HAL_GPIO_Init(cfg->Pwdn_Port, cfg->Pwdn_Pin, &param);
-	HAL_GPIO_WritePin(cfg->Pwdn_Port, cfg->Pwdn_Pin, GPIO_PIN_HIGH);
-	OS_MSleep(10);
+	if (!same_pin)
+		HAL_GPIO_Init(cfg->Reset_Port, cfg->Reset_Pin, &param);
+
 	HAL_GPIO_WritePin(cfg->Pwdn_Port, cfg->Pwdn_Pin, GPIO_PIN_LOW);
+	if (!same_pin)
+		HAL_GPIO_WritePin(cfg->Reset_Port, cfg->Reset_Pin, GPIO_PIN_LOW);
 	OS_MSleep(10);
+
+	HAL_GPIO_WritePin(cfg->Pwdn_Port, cfg->Pwdn_Pin, GPIO_PIN_HIGH);
+	if (!same_pin)
+		HAL_GPIO_WritePin(cfg->Reset_Port, cfg->Reset_Pin, GPIO_PIN_HIGH);
+	OS_MSleep(10);
+
 }
 
 static void GC0328C_DeInitPower(SENSOR_PowerCtrlCfg *cfg)
 {
+	uint8_t same_pin;
+
+	same_pin = (cfg->Pwdn_Port == cfg->Reset_Port) && (cfg->Pwdn_Pin == cfg->Reset_Pin);
 	HAL_GPIO_WritePin(cfg->Pwdn_Port, cfg->Pwdn_Pin, GPIO_PIN_HIGH);
+	if (!same_pin)
+		HAL_GPIO_WritePin(cfg->Reset_Port, cfg->Reset_Pin, GPIO_PIN_LOW);
+	OS_MSleep(3);
 	HAL_GPIO_DeInit(cfg->Pwdn_Port, cfg->Pwdn_Pin);
+	if (!same_pin)
+		HAL_GPIO_DeInit(cfg->Reset_Port, cfg->Reset_Pin);
 }
 
-static void GC0328C_SyncEnable(void)
+static void __attribute__((unused)) GC0328C_SyncEnable(void)
 {
 	GC0328C_WriteSccb(0xf1, 0x07);
 	GC0328C_WriteSccb(0xf2, 0x01);
@@ -397,28 +436,37 @@ HAL_Status HAL_GC0328C_IoCtl(SENSOR_IoctrlCmd attr, uint32_t arg)
 
 static HAL_Status GC0328C_Init(void)
 {
-	uint8_t chip_id;
+	uint8_t chip_id = 0;
 	uint16_t i = 0;
 
+	GC0328C_WriteSccb(0xfe, 0x00);
 	if (GC0328C_ReadSccb(0xf0, &chip_id) != 1) {
-		GC0328C_LOGE("GC0328C sccb read error\n");
+		GC0328C_LOGE("GC0328C sccb chip-id read error\n");
 		return HAL_ERROR;
-	} else {
-		if (chip_id != GC0328C_CHIP_ID) {
-			GC0328C_LOGE("GC0328C get chip id wrong 0x%02x\n", chip_id);
-			return HAL_ERROR;
-		} else {
-			GC0328C_LOGI("GC0328C chip id read success 0x%02x\n", chip_id);
-		}
 	}
+	if (chip_id != GC0328C_CHIP_ID) {
+		GC0328C_LOGE("GC0328C get chip id wrong 0x%02x\n", chip_id);
+		return HAL_ERROR;
+	}
+	GC0328C_LOGI("GC0328C chip id read success 0x%02x\n", chip_id);
 
 	for (i = 0; i < sizeof(gc0328c_init_reg_tbl) / sizeof(gc0328c_init_reg_tbl[0]); i++) {
-		if (!GC0328C_WriteSccb(gc0328c_init_reg_tbl[i][0], gc0328c_init_reg_tbl[i][1])) {
-			GC0328C_LOGE("GC0328C sccb read error\n");
+		if (GC0328C_WriteRegWithRetry(i, gc0328c_init_reg_tbl[i][0], gc0328c_init_reg_tbl[i][1], "main") != 1) {
+			GC0328C_LOGE("GC0328C sccb write error during main init table at index=%u reg=0x%02x val=0x%02x\n",
+			            (unsigned int)i, gc0328c_init_reg_tbl[i][0], gc0328c_init_reg_tbl[i][1]);
 			return HAL_ERROR;
 		}
 	}
 
+	for (i = 0; i < sizeof(gc0328c_post_init_reg_tbl) / sizeof(gc0328c_post_init_reg_tbl[0]); i++) {
+		if (GC0328C_WriteRegWithRetry(i, gc0328c_post_init_reg_tbl[i][0], gc0328c_post_init_reg_tbl[i][1], "post") != 1) {
+			GC0328C_LOGE("GC0328C sccb write error during post init table at index=%u reg=0x%02x val=0x%02x\n",
+			            (unsigned int)i, gc0328c_post_init_reg_tbl[i][0], gc0328c_post_init_reg_tbl[i][1]);
+			return HAL_ERROR;
+		}
+	}
+
+	OS_MSleep(1000);
 	GC0328C_LOGI("GC0328C Init Done \r\n");
 
 	return HAL_OK;
@@ -478,6 +526,7 @@ HAL_Status HAL_GC0328C_Init(SENSOR_ConfigParam *cfg)
 
 	priv->i2c_id = cfg->i2c_id;
 	GC0328C_InitSccb(priv->i2c_id);
+	OS_MSleep(1);
 
 #ifdef CONFIG_PM
 	if (!priv->suspend) {

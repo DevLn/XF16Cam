@@ -71,6 +71,7 @@ OBJS := $(addsuffix .o,$(SRCS))
 #   - relative to "../image/$(__CONFIG_CHIP_TYPE)/", eg. "../image/xr872/"
 #   - define your own "IMAGE_CFG" to override the default one
 # IMAGE_CFG :=
+IMAGE_CFG := image_auto_cal.cfg
 
 # image name, default to xr_system
 # IMAGE_NAME :=

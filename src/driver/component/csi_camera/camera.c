@@ -124,7 +124,22 @@ static void CAMERA_CsiJpegIrq(CSI_JPEG_IRQEvent event, void *arg)
 	}  else if (event == CSI_JPEG_EVENT_MPART) {
 		status = CAMERA_STATUS_MPART;
 	} else {
-		CAMERA_ERR("csi jpeg excption\n");
+		CAMERA_ERR("csi jpeg excption event=%d csi_int=0x%08x jpeg_int=0x%08x\n",
+		           event,
+		           CSI->CSI_C0_INT_STA_REG,
+		           JPEG->VE_INT_STA_REG);
+		CAMERA_ERR("csi regs cap=0x%08x sig=0x%08x h=0x%08x v=0x%08x in=0x%08x\n",
+		           CSI->CSI_CAP_REG,
+		           CSI->CSI_SIGNAL_STA_REG,
+		           CSI->CSI_C0_HSIZE_REG,
+		           CSI->CSI_C0_VSIZE_REG,
+		           CSI->CSI_C0_IN_SIZE_REG);
+		CAMERA_ERR("jpeg regs mode=0x%08x sta=0x%08x out=0x%08x vsize=0x%08x hw=0x%08x\n",
+		           JPEG->VE_MODE_REG,
+		           JPEG->VE_STA_REG,
+		           JPEG->OUTSTM_OFFSET,
+		           JPEG->OUTSTM_VSIZE,
+		           JPEG->HARDWARE_OFFSET);
 		HAL_JPEG_Reset();
 		HAL_JPEG_Config(&gJpegParam);
 		HAL_CSI_Config(&gCsiParam);
@@ -337,6 +352,13 @@ int HAL_CAMERA_Init(CAMERA_Cfg *cfg)
 	priv->cb = cfg->cb;
 	priv->mem_mgmt = cfg->mgmt;
 
+	/*
+	 * The sensor detect/probe path may need MCLK running before SCCB/I2C ID reads.
+	 * Bring CSI/JPEG clocks and pinmux up first so the wrapper can scan sensors
+	 * under the same clock conditions as the factory firmware.
+	 */
+	memcpy(&priv->sensor_func, &cfg->sensor_func, sizeof(SENSOR_Func));
+
 	/* csi init */
 	if (CAMERA_InitCsiJpeg() != HAL_OK) {
 		CAMERA_ERR("csi/jpeg init fail\n");
@@ -346,25 +368,31 @@ int HAL_CAMERA_Init(CAMERA_Cfg *cfg)
 	/* jpeg config */
 	if (CAMERA_ConfigJpeg(&cfg->jpeg_cfg) != HAL_OK) {
 		CAMERA_ERR("jpeg config fail\n");
-		goto exit_1;
+		goto exit_sensor;
 	}
 
 	/* csi config */
 	if (CAMERA_ConfigCsi(&cfg->csi_cfg) != HAL_OK) {
 		CAMERA_ERR("csi config fail\n");
-		goto exit_1;
+		goto exit_sensor;
 	}
-
-	/* sensor init */
-	memcpy(&priv->sensor_func, &cfg->sensor_func, sizeof(SENSOR_Func));
 
 	if (CAMERA_InitSensor(&cfg->sensor_cfg) != HAL_OK) {
 		CAMERA_ERR("sensor config fail\n");
-		goto exit_1;
+		goto exit_sensor;
 	}
+
+	/*
+	 * The sensor wrapper may have selected a backend-specific deinit/ioctl pair at
+	 * runtime. Refresh the live camera-private hooks from the caller's config after
+	 * sensor init returns.
+	 */
+	priv->sensor_func.deinit = cfg->sensor_func.deinit;
+	priv->sensor_func.ioctl = cfg->sensor_func.ioctl;
+
 	return 0;
 
-exit_1:
+exit_sensor:
 	CAMERA_DeInitCsiJpeg();
 
 exit_2:
@@ -387,9 +415,9 @@ void HAL_CAMERA_DeInit(void)
 		return;
 	}
 
-	CAMERA_DeInitCsiJpeg();
-
 	CAMERA_DeInitSensor();
+
+	CAMERA_DeInitCsiJpeg();
 
 	OS_SemaphoreDelete(&priv->sem);
 
@@ -626,4 +654,3 @@ int HAL_CAMERA_IoCtl(CAMERA_IoctrlCmd cmd, uint32_t arg)
 
 	return 0;
 }
-

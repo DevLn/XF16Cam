@@ -250,7 +250,7 @@ static void JPEG_WriteQtab(uint32_t base_addr)
 static void CSI_JPEG_IRQHandler(void)
 {
 	int len = 0;
-	uint32_t csi_int, jpe_int;
+	uint32_t csi_int, jpe_int, jpe_err;
 #if JPEG_MPART_SLOW_CHECK
 	static uint8_t part_slow = 0;
 #endif
@@ -266,7 +266,11 @@ static void CSI_JPEG_IRQHandler(void)
 
 	CSI_JPEG_DBG("csi:%x jpe:%x\n", csi_int, jpe_int);
 
-	if (jpe_int & JPEG_INT_ERR) {
+	jpe_err = jpe_int & JPEG_INT_ERR;
+	if ((jpe_err == JPEG_CSI_SIZE_CHG) && (jpe_int & JPEG_CSI_FRAME_END))
+		jpe_err = 0;
+
+	if (jpe_err) {
 		CSI_JPEG_ERR("exception\n");
 		CSI_JPEG_REG_ALL((CSI_REG_MASK | JPEG_REG_MASK));
 		priv->state = CSI_STATE_INIT;

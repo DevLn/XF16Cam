@@ -87,8 +87,8 @@ static const GPIO_PinMuxParam g_pinmux_irtx[] = {
 
 __xip_rodata
 static const GPIO_PinMuxParam g_pinmux_i2c0[] = {
-	{ GPIO_PORT_A, GPIO_PIN_19,  { GPIOA_P19_F3_I2C0_SCL,   GPIO_DRIVING_LEVEL_1, GPIO_PULL_NONE } },
-	{ GPIO_PORT_A, GPIO_PIN_20,  { GPIOA_P20_F3_I2C0_SDA,   GPIO_DRIVING_LEVEL_1, GPIO_PULL_NONE } },
+	{ GPIO_PORT_A, GPIO_PIN_17,  { GPIOA_P17_F2_I2C0_SCL,   GPIO_DRIVING_LEVEL_1, GPIO_PULL_UP   } },
+	{ GPIO_PORT_A, GPIO_PIN_18,  { GPIOA_P18_F2_I2C0_SDA,   GPIO_DRIVING_LEVEL_1, GPIO_PULL_UP   } },
 };
 
 __xip_rodata
@@ -168,8 +168,8 @@ static const FlashBoardCfg g_flash_cfg[] = {
 	{
 #if defined(__CONFIG_DEFAULT_FLASH_FLASHC)
 	    .type = FLASH_DRV_FLASHC,
-	    .mode = FLASH_READ_QUAD_O_MODE,
-	    .flashc.clk = (64 * 1000 * 1000),
+	    .mode = FLASH_READ_DUAL_O_MODE,
+	    .flashc.clk = (96 * 1000 * 1000),
 #elif defined(__CONFIG_DEFAULT_FLASH_SPI)
 	    .type = FLASH_DRV_SPI,
 	    .mode = FLASH_READ_FAST_MODE,

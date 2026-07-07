@@ -32,6 +32,7 @@
 #include "version.h"
 #include "pm/pm.h"
 #include "image/image.h"
+#include "image/flash.h"
 
 #include "common/board/board.h"
 #include "common/board/board_common.h"
@@ -225,11 +226,39 @@ static void platform_ext_dcdc_init(void)
 
 #ifdef __CONFIG_XIP
 __nonxip_text
+static uint32_t platform_find_image_section(uint32_t id)
+{
+	section_header_t sh;
+	uint32_t addr = PRJCONF_IMG_ADDR;
+	uint32_t i;
+
+	for (i = 0; i < 8; ++i) {
+		uint32_t rd = flash_read(PRJCONF_IMG_FLASH, addr, &sh, IMAGE_HEADER_SIZE);
+		if (rd != IMAGE_HEADER_SIZE) {
+			break;
+		}
+		if (sh.magic_number != IMAGE_MAGIC_NUMBER) {
+			FWK_NX_ERR("xip scan: bad magic, expect=0x%08x\n", IMAGE_MAGIC_NUMBER);
+			break;
+		}
+		if (sh.id == id) {
+			return addr;
+		}
+		if (sh.next_addr == IMAGE_INVALID_ADDR) {
+			break;
+		}
+		addr = PRJCONF_IMG_ADDR + sh.next_addr;
+	}
+
+	return IMAGE_INVALID_ADDR;
+}
+
+__nonxip_text
 static void platform_xip_init(void)
 {
 	uint32_t addr;
 
-	addr = image_get_section_addr(IMAGE_APP_XIP_ID);
+	addr = platform_find_image_section(IMAGE_APP_XIP_ID);
 	if (addr == IMAGE_INVALID_ADDR) {
 		FWK_NX_ERR("no xip section\n");
 		return;
@@ -563,7 +592,7 @@ void platform_cache_init(void)
   #ifdef __CONFIG_XIP
 	ICache_Config cache_cfg = { 0 };
 	uint32_t addr;
-	addr = image_get_section_addr(IMAGE_APP_XIP_ID);
+	addr = platform_find_image_section(IMAGE_APP_XIP_ID);
 	if (addr == IMAGE_INVALID_ADDR) {
 		FWK_NX_ERR("no xip section\n");
 		return;

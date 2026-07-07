@@ -5,7 +5,7 @@
 # ----------------------------------------------------------------------------
 # cross compiler
 # ----------------------------------------------------------------------------
-CC_DIR := ~/tools/gcc-arm-none-eabi-4_9-2015q2/bin
+CC_DIR := C:/gcc-arm-none-eabi-5_4-2016q3/bin
 CC_PREFIX := $(CC_DIR)/arm-none-eabi-
 
 AS      := $(CC_PREFIX)as
@@ -25,7 +25,7 @@ STRIP   := $(CC_PREFIX)strip
 CP := cp
 
 # $(MKIMAGE) is a tool for creating image
-ifeq ($(shell uname -o), Cygwin)
+ifneq ($(filter Cygwin Msys,$(shell uname -o)),)
   MKIMAGE := mkimage.exe
 else
   MKIMAGE := mkimage
