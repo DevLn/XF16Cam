@@ -23,7 +23,7 @@
 #define JPEG_IMAGE_WIDTH         (320)
 #define JPEG_IMAGE_HEIGHT        (240)
 #define JPEG_OUTPUT_FILE         "test.jpg"
-#define XF16_DEMO_REVISION       "v64 tidy-pass2"
+#define XF16_DEMO_REVISION       "v65 tidy-pass3"
 
 #define XF16_SENSOR_I2C_ID       I2C0_ID
 #define XF16_CTRL_PORT           GPIO_PORT_A
@@ -130,6 +130,7 @@ static CAMERA_Cfg camera_cfg = {
 	.sensor_func.ioctl = xf16_sensor_dispatch_ioctl,
 };
 
+/* XF16 board-specific camera rail and control-pin preparation. */
 static void xf16_release_camera_wakeup_hold(void)
 {
 	uint32_t mask = HAL_BIT(4) | HAL_BIT(5);
@@ -170,7 +171,7 @@ static void xf16_factory_pa23_prepare(void)
 	HAL_GPIO_WritePin(XF16_FACTORY_PA23_PORT, XF16_FACTORY_PA23_PIN, GPIO_PIN_HIGH);
 }
 
-static void camera_power_prepare(void)
+static void xf16_board_camera_power_prepare(void)
 {
 	HAL_PRCM_SelectEXTLDOVolt(PRCM_EXT_LDO_3V3);
 	HAL_PRCM_SetEXTLDOMode(PRCM_EXTLDO_ALWAYS_ON);
@@ -188,6 +189,7 @@ static void camera_power_prepare(void)
 	       (unsigned long)PRCM->CPUA_WAKE_IO_EN);
 }
 
+/* Factory-style GC0328 detect wrapper used by HAL_CAMERA_Init(). */
 static void xf16_drive_ctrl(GPIO_PinState state, const char *phase)
 {
 	GPIO_InitParam param;
@@ -353,6 +355,7 @@ static HAL_Status xf16_sensor_dispatch_ioctl(SENSOR_IoctrlCmd attr, uint32_t arg
 	return HAL_ERROR;
 }
 
+/* JPEG demo buffer, capture, and SD-file handling. */
 static int camera_mem_create(CAMERA_JpegCfg *jpeg_cfg, CAMERA_Mgmt *mgmt)
 {
 	uint8_t *addr;
@@ -483,7 +486,7 @@ static int camera_write_jpeg_file(const uint8_t *addr, uint32_t size)
 	return 0;
 }
 
-static int camera_get_image(void)
+static int jpeg_demo_capture_and_save(void)
 {
 	CAMERA_JpegBuffInfo jpeg_info;
 	uint8_t *addr;
@@ -528,14 +531,14 @@ int main(void)
 	platform_init();
 	printf("jpeg demo started (xf16 factory-wrapper " XF16_DEMO_REVISION ")\n");
 
-	camera_power_prepare();
+	xf16_board_camera_power_prepare();
 	if (camera_init() != 0) {
 		camera_mem_destroy();
 		goto exit_fs;
 	}
 	camera_started = 1;
 
-	if (camera_get_image() != 0)
+	if (jpeg_demo_capture_and_save() != 0)
 		goto exit_camera;
 
 	ret = 0;
