@@ -22,6 +22,8 @@
 #define JPEG_BUFF_SIZE           (50 * 1024)
 #define JPEG_IMAGE_WIDTH         (320)
 #define JPEG_IMAGE_HEIGHT        (240)
+#define JPEG_OUTPUT_FILE         "test.jpg"
+#define XF16_DEMO_REVISION       "v64 tidy-pass2"
 
 #define XF16_SENSOR_I2C_ID       I2C0_ID
 #define XF16_CTRL_PORT           GPIO_PORT_A
@@ -239,12 +241,12 @@ static int xf16_probe_gc0328(I2C_ID bus, const char *phase, uint8_t *chip_id)
 
 	printf("xf16 gc0328 probe begin phase=%s dev=0x%02x id_reg=0x%02x expect=0x%02x\n",
 	       phase,
-	       XF16_GC0328_ADDR,
+	       g_gc0328_backend.addr,
 	       g_gc0328_backend.id_reg,
 	       g_gc0328_backend.id_value);
-	if (!xf16_sccb_write_reg(bus, XF16_GC0328_ADDR, 0xfe, 0x00, phase))
+	if (!xf16_sccb_write_reg(bus, g_gc0328_backend.addr, 0xfe, 0x00, phase))
 		return 0;
-	if (!xf16_sccb_read_reg(bus, XF16_GC0328_ADDR, g_gc0328_backend.id_reg, &value, phase))
+	if (!xf16_sccb_read_reg(bus, g_gc0328_backend.addr, g_gc0328_backend.id_reg, &value, phase))
 		return 0;
 	*chip_id = value;
 	if (value == g_gc0328_backend.id_value) {
@@ -275,10 +277,9 @@ static HAL_Status xf16_sccb_init_bus(I2C_ID bus, const char *tag)
 	return status;
 }
 
-static void xf16_sccb_deinit_bus(I2C_ID bus, const char *tag)
+static void xf16_sccb_deinit_bus(I2C_ID bus)
 {
 	HAL_I2C_DeInit(bus);
-	(void)tag;
 }
 
 static HAL_Status xf16_call_selected_backend(SENSOR_ConfigParam *cfg)
@@ -322,7 +323,7 @@ static HAL_Status xf16_sensor_detect_wrapper(SENSOR_ConfigParam *cfg)
 		return xf16_call_selected_backend(cfg);
 	}
 
-	xf16_sccb_deinit_bus(bus, "after_primary_fail_deinit");
+	xf16_sccb_deinit_bus(bus);
 	xf16_drive_ctrl(GPIO_PIN_LOW, "fallback_low");
 	status = xf16_sccb_init_bus(bus, "after_fallback_init");
 	if (status != HAL_OK)
@@ -333,7 +334,7 @@ static HAL_Status xf16_sensor_detect_wrapper(SENSOR_ConfigParam *cfg)
 		return xf16_call_selected_backend(cfg);
 	}
 
-	xf16_sccb_deinit_bus(bus, "after_no_match_deinit");
+	xf16_sccb_deinit_bus(bus);
 	printf("xf16 gc0328 detect failed: last_chip=0x%02x\n", chip_id);
 	return HAL_ERROR;
 }
@@ -460,24 +461,25 @@ static int camera_write_jpeg_file(const uint8_t *addr, uint32_t size)
 		return 0;
 	}
 
-	f_unlink("test.jpg");
-	res = f_open(&fp, "test.jpg", FA_WRITE | FA_CREATE_NEW);
+	f_unlink(JPEG_OUTPUT_FILE);
+	res = f_open(&fp, JPEG_OUTPUT_FILE, FA_WRITE | FA_CREATE_NEW);
 	if (res != FR_OK) {
-		printf("open test.jpg error %d\n", res);
+		printf("open %s error %d\n", JPEG_OUTPUT_FILE, res);
 		return -1;
 	}
 
 	res = f_write(&fp, addr, size, &bw);
 	f_close(&fp);
 	if (res != FR_OK || bw < size) {
-		printf("write test.jpg fail(%d), bw=%lu size=%lu\n",
+		printf("write %s fail(%d), bw=%lu size=%lu\n",
+		       JPEG_OUTPUT_FILE,
 		       res,
 		       (unsigned long)bw,
 		       (unsigned long)size);
 		return -1;
 	}
 
-	printf("write jpeg image ok: test.jpg size=%lu\n", (unsigned long)size);
+	printf("write jpeg image ok: %s size=%lu\n", JPEG_OUTPUT_FILE, (unsigned long)size);
 	return 0;
 }
 
@@ -524,7 +526,7 @@ int main(void)
 	uint8_t camera_started = 0;
 
 	platform_init();
-	printf("jpeg demo started (xf16 factory-wrapper v63 tidy-pass1)\n");
+	printf("jpeg demo started (xf16 factory-wrapper " XF16_DEMO_REVISION ")\n");
 
 	camera_power_prepare();
 	if (camera_init() != 0) {
