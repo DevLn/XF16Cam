@@ -9,7 +9,6 @@
 #include "fs/fatfs/ff.h"
 #include "common/framework/platform_init.h"
 #include "common/framework/fs_ctrl.h"
-#include "driver/chip/hal_ccm.h"
 #include "driver/chip/hal_csi_jpeg.h"
 #include "driver/chip/hal_gpio.h"
 #include "driver/chip/hal_i2c.h"
@@ -17,7 +16,6 @@
 #include "driver/component/csi_camera/camera.h"
 #include "driver/component/csi_camera/gc0328c/drv_gc0328c.h"
 
-#define JPEG_PSRAM_EN            (0)
 #define JPEG_ONLINE_EN           (1)
 #define JPEG_SRAM_SIZE           (220 * 1024)
 #define JPEG_MPART_EN            (0)
@@ -34,7 +32,6 @@
 #define XF16_SETTLE_MS           (100)
 #define XF16_GC0328_ADDR         (0x21)
 #define XF16_GC0328_CHIP_ID      (0x9d)
-#define XF16_DIAG_LOG            (0)
 #define XF16_SAME_PIN_PWR(_port, _pin) \
 	{ \
 		.Reset_Port = (_port), \
@@ -59,15 +56,6 @@ static HAL_Status xf16_sensor_dispatch_ioctl(SENSOR_IoctrlCmd attr, uint32_t arg
 static void xf16_release_camera_wakeup_hold(void);
 static void xf16_camera_ctrl_prehold_low(void);
 static void xf16_factory_pa23_prepare(void);
-#if XF16_DIAG_LOG
-static void xf16_log_camera_pad_state(const char *tag);
-static void xf16_log_csi_clock_state(const char *tag);
-static void xf16_log_i2c_bus_snapshot(const char *tag);
-#else
-#define xf16_log_camera_pad_state(_tag) do { } while (0)
-#define xf16_log_csi_clock_state(_tag) do { } while (0)
-#define xf16_log_i2c_bus_snapshot(_tag) do { } while (0)
-#endif
 
 static uint8_t *gmemaddr;
 static CAMERA_Mgmt mem_mgmt;
@@ -140,70 +128,6 @@ static CAMERA_Cfg camera_cfg = {
 	.sensor_func.ioctl = xf16_sensor_dispatch_ioctl,
 };
 
-#if XF16_DIAG_LOG
-static void xf16_log_csi_clock_state(const char *tag)
-{
-	printf("xf16 %s: dev_clk=0x%08lx csi_en=0x%08lx csi_cfg=0x%08lx jpeg_mode=0x%08lx jpeg_reset=0x%08lx\n",
-	       tag,
-	       (unsigned long)PRCM->DEV_CLK_CTRL,
-	       (unsigned long)CSI->CSI_EN_REG,
-	       (unsigned long)CSI->CSI_CFG_REG,
-	       (unsigned long)JPEG->VE_MODE_REG,
-	       (unsigned long)JPEG->VE_RESET_REG);
-}
-
-static void xf16_log_i2c_bus_snapshot(const char *tag)
-{
-	uint32_t ctrl = I2C0->I2C_CTRL;
-	uint32_t line = I2C0->I2C_LINE_CTRL;
-
-	printf("xf16 i2c0 %s: ctrl=0x%08lx status=0x%08lx line=0x%08lx clk=0x%08lx data=0x%08lx addr=0x%08lx xaddr=0x%08lx scl=%u sda=%u irq_en=%u bus_en=%u start=%u stop=%u irqf=%u ack=%u\n",
-	       tag,
-	       (unsigned long)ctrl,
-	       (unsigned long)I2C0->I2C_STATUS,
-	       (unsigned long)line,
-	       (unsigned long)I2C0->I2C_CLK_CTRL,
-	       (unsigned long)I2C0->I2C_DATA,
-	       (unsigned long)I2C0->I2C_ADDR,
-	       (unsigned long)I2C0->I2C_XADDR,
-	       (unsigned int)((line & I2C_SCL_STATE_BIT) ? 1 : 0),
-	       (unsigned int)((line & I2C_SDA_STATE_BIT) ? 1 : 0),
-	       (unsigned int)((ctrl & I2C_IRQ_EN_BIT) ? 1 : 0),
-	       (unsigned int)((ctrl & I2C_BUS_EN_BIT) ? 1 : 0),
-	       (unsigned int)((ctrl & I2C_START_BIT) ? 1 : 0),
-	       (unsigned int)((ctrl & I2C_STOP_BIT) ? 1 : 0),
-	       (unsigned int)((ctrl & I2C_IRQ_FLAG_BIT) ? 1 : 0),
-	       (unsigned int)((ctrl & I2C_ACK_EN_BIT) ? 1 : 0));
-}
-
-static void xf16_log_one_pad(const char *tag, const char *name, GPIO_Pin pin)
-{
-	GPIO_InitParam cfg;
-	GPIO_PinState state;
-
-	HAL_GPIO_GetConfig(GPIO_PORT_A, pin, &cfg);
-	state = HAL_GPIO_ReadPin(GPIO_PORT_A, pin);
-	printf("xf16 pad %s %s PA%u mode=%u pull=%u drv=%u state=%u\n",
-	       tag,
-	       name,
-	       (unsigned int)pin,
-	       (unsigned int)cfg.mode,
-	       (unsigned int)cfg.pull,
-	       (unsigned int)cfg.driving,
-	       (unsigned int)state);
-}
-
-static void xf16_log_camera_pad_state(const char *tag)
-{
-	xf16_log_one_pad(tag, "mclk", GPIO_PIN_9);
-	xf16_log_one_pad(tag, "ctrl", XF16_CTRL_PIN);
-	xf16_log_one_pad(tag, "factory_pa", XF16_FACTORY_PA23_PIN);
-	xf16_log_one_pad(tag, "scl", GPIO_PIN_17);
-	xf16_log_one_pad(tag, "sda", GPIO_PIN_18);
-}
-
-#endif
-
 static void xf16_release_camera_wakeup_hold(void)
 {
 	uint32_t mask = HAL_BIT(4) | HAL_BIT(5);
@@ -227,7 +151,6 @@ static void xf16_camera_ctrl_prehold_low(void)
 	HAL_GPIO_Init(XF16_CTRL_PORT, XF16_CTRL_PIN, &param);
 	HAL_GPIO_WritePin(XF16_CTRL_PORT, XF16_CTRL_PIN, GPIO_PIN_LOW);
 	OS_MSleep(20);
-	xf16_log_camera_pad_state("pa14_prehold_low");
 }
 
 static void xf16_factory_pa23_prepare(void)
@@ -241,10 +164,8 @@ static void xf16_factory_pa23_prepare(void)
 	HAL_GPIO_WritePin(XF16_FACTORY_PA23_PORT, XF16_FACTORY_PA23_PIN, GPIO_PIN_LOW);
 	printf("xf16 factory PA23 pulse: low %u ms then high\n",
 	       (unsigned int)XF16_FACTORY_PA23_PULSE_MS);
-	xf16_log_camera_pad_state("factory_pa23_low");
 	OS_MSleep(XF16_FACTORY_PA23_PULSE_MS);
 	HAL_GPIO_WritePin(XF16_FACTORY_PA23_PORT, XF16_FACTORY_PA23_PIN, GPIO_PIN_HIGH);
-	xf16_log_camera_pad_state("factory_pa23_high");
 }
 
 static void camera_power_prepare(void)
@@ -263,7 +184,6 @@ static void camera_power_prepare(void)
 	       (unsigned long)PRCM->SYS_LDO_SW_CTRL,
 	       (unsigned long)PRCM->CPUA_WAKE_IO_HOLD,
 	       (unsigned long)PRCM->CPUA_WAKE_IO_EN);
-	xf16_log_camera_pad_state("after_power_prepare");
 }
 
 static void xf16_drive_ctrl(GPIO_PinState state, const char *phase)
@@ -280,7 +200,6 @@ static void xf16_drive_ctrl(GPIO_PinState state, const char *phase)
 	       (unsigned int)state,
 	       (unsigned int)XF16_SETTLE_MS);
 	OS_MSleep(XF16_SETTLE_MS);
-	xf16_log_camera_pad_state(phase);
 }
 
 static int xf16_sccb_write_reg(I2C_ID bus, uint8_t dev_addr, uint8_t reg, uint8_t value, const char *tag)
@@ -295,8 +214,6 @@ static int xf16_sccb_write_reg(I2C_ID bus, uint8_t dev_addr, uint8_t reg, uint8_
 	       reg,
 	       value,
 	       (long)ret);
-	if (ret != 1)
-		xf16_log_i2c_bus_snapshot("write_fail");
 	return ret == 1;
 }
 
@@ -313,8 +230,6 @@ static int xf16_sccb_read_reg(I2C_ID bus, uint8_t dev_addr, uint8_t reg, uint8_t
 	       (long)ret,
 	       *value,
 	       XF16_GC0328_CHIP_ID);
-	if (ret != 1)
-		xf16_log_i2c_bus_snapshot("read_fail");
 	return ret == 1;
 }
 
@@ -327,7 +242,6 @@ static int xf16_probe_gc0328(I2C_ID bus, const char *phase, uint8_t *chip_id)
 	       XF16_GC0328_ADDR,
 	       g_gc0328_backend.id_reg,
 	       g_gc0328_backend.id_value);
-	xf16_log_i2c_bus_snapshot("probe_begin");
 	if (!xf16_sccb_write_reg(bus, XF16_GC0328_ADDR, 0xfe, 0x00, phase))
 		return 0;
 	if (!xf16_sccb_read_reg(bus, XF16_GC0328_ADDR, g_gc0328_backend.id_reg, &value, phase))
@@ -358,14 +272,13 @@ static HAL_Status xf16_sccb_init_bus(I2C_ID bus, const char *tag)
 	       (unsigned int)initParam.addrMode,
 	       (unsigned long)initParam.clockFreq,
 	       (long)status);
-	xf16_log_i2c_bus_snapshot(tag);
 	return status;
 }
 
 static void xf16_sccb_deinit_bus(I2C_ID bus, const char *tag)
 {
 	HAL_I2C_DeInit(bus);
-	xf16_log_i2c_bus_snapshot(tag);
+	(void)tag;
 }
 
 static HAL_Status xf16_call_selected_backend(SENSOR_ConfigParam *cfg)
@@ -376,7 +289,6 @@ static HAL_Status xf16_call_selected_backend(SENSOR_ConfigParam *cfg)
 		return HAL_ERROR;
 
 	HAL_I2C_DeInit((I2C_ID)cfg->i2c_id);
-	xf16_log_i2c_bus_snapshot("after_probe_deinit");
 	status = g_selected_backend->hooks->init(cfg);
 	if (status == HAL_OK) {
 		camera_cfg.jpeg_cfg.width = g_selected_backend->width;
@@ -399,15 +311,11 @@ static HAL_Status xf16_sensor_detect_wrapper(SENSOR_ConfigParam *cfg)
 	printf("xf16 detect ctx: gc0328-only bus=%u ctrl=PA14 settle_ms=%u\n",
 	       (unsigned int)bus,
 	       (unsigned int)XF16_SETTLE_MS);
-	xf16_log_csi_clock_state("before_sensor_wrapper_clock_state");
-	xf16_log_i2c_bus_snapshot("before_init");
-	xf16_log_camera_pad_state("before_i2c_init");
 
 	xf16_drive_ctrl(GPIO_PIN_HIGH, "primary_high");
 	status = xf16_sccb_init_bus(bus, "after_primary_init");
 	if (status != HAL_OK)
 		return HAL_ERROR;
-	xf16_log_camera_pad_state("after_primary_init");
 
 	if (xf16_probe_gc0328(bus, "primary_high", &chip_id)) {
 		g_selected_backend = &g_gc0328_backend;
@@ -541,16 +449,6 @@ static int xf16_ensure_jpeg_eoi(uint8_t *addr, uint32_t *size, uint32_t capacity
 	return eoi;
 }
 
-static void xf16_print_jpeg_bytes(const char *tag, const uint8_t *addr, uint32_t len)
-{
-	uint32_t i;
-
-	printf("%s", tag);
-	for (i = 0; i < len; i++)
-		printf(" %02x", addr[i]);
-	printf("\n");
-}
-
 static int camera_write_jpeg_file(const uint8_t *addr, uint32_t size)
 {
 	FIL fp;
@@ -599,8 +497,6 @@ static int camera_get_image(void)
 	size = jpeg_info.size + CAMERA_JPEG_HEADER_LEN;
 	{
 		uint32_t capacity = CAMERA_JPEG_HEADER_LEN + mem_mgmt.jpeg_buf[jpeg_info.buff_index].size;
-		uint32_t head_len;
-		uint32_t tail_len;
 		int eoi = xf16_ensure_jpeg_eoi(addr, &size, capacity);
 
 		if (eoi < 0)
@@ -609,10 +505,6 @@ static int camera_get_image(void)
 		       (unsigned int)jpeg_info.buff_index,
 		       (unsigned long)size,
 		       addr);
-		head_len = size < 16 ? size : 16;
-		tail_len = size < 16 ? size : 16;
-		xf16_print_jpeg_bytes("xf16 jpeg first16:", addr, head_len);
-		xf16_print_jpeg_bytes("xf16 jpeg last16:", addr + size - tail_len, tail_len);
 		printf("xf16 jpeg proof: soi=%u eoi=%u eoi_off=%ld eoi_tail_gap=%ld total=%lu payload=%lu\n",
 		       (unsigned int)(size >= 2 && addr[0] == 0xff && addr[1] == 0xd8),
 		       (unsigned int)(eoi >= 0),
@@ -632,10 +524,9 @@ int main(void)
 	uint8_t camera_started = 0;
 
 	platform_init();
-	printf("jpeg demo started (xf16 factory-wrapper v62 sd-after-capture)\n");
+	printf("jpeg demo started (xf16 factory-wrapper v63 tidy-pass1)\n");
 
 	camera_power_prepare();
-	xf16_log_csi_clock_state("pre_camera_init_clock_state");
 	if (camera_init() != 0) {
 		camera_mem_destroy();
 		goto exit_fs;
