@@ -78,9 +78,15 @@ else
   CPU := -mcpu=cortex-m3 -mthumb
 endif
 
+WARNINGS_AS_ERRORS ?= y
+
+ifeq ($(WARNINGS_AS_ERRORS), y)
+WARNING_FLAGS := -Werror
+endif
+
 CC_FLAGS = $(CPU) -c $(DBG_FLAG) -fno-common -fmessage-length=0 \
 	-fno-exceptions -ffunction-sections -fdata-sections -fomit-frame-pointer \
-	-Wall -Werror -Wpointer-arith -Wno-error=unused-function \
+	-Wall $(WARNING_FLAGS) -Wpointer-arith -Wno-error=unused-function \
 	-MMD -MP $(OPTIMIZE_FLAG)
 
 LD_FLAGS = $(CPU) -Wl,--gc-sections --specs=nano.specs \
