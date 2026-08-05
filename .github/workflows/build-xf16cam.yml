@@ -1,0 +1,61 @@
+name: Build XF16Cam XR872
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xf16cam-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Arm GNU Toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: 8-2019-q3
+
+      - name: Configure XR872 build
+        shell: bash
+        run: |
+          printf '%s\n' \
+            '__CONFIG_CHIP_TYPE ?= xr872' \
+            '__CONFIG_HOSC_TYPE ?= 40' > .config
+          chmod +x tools/mkimage
+
+      - name: Build flash image
+        shell: bash
+        run: |
+          make -C project/example/xf16cam/gcc \
+            CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" \
+            -j"$(nproc)" image
+
+      - name: Package flash image
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp project/example/xf16cam/image/xr872/xr_system.img \
+            dist/xf16cam-xr872.img
+          arm-none-eabi-size project/example/xf16cam/gcc/xf16cam.axf \
+            | tee dist/size.txt
+          sha256sum dist/xf16cam-xr872.img > dist/SHA256SUMS
+
+      - name: Upload flash image
+        uses: actions/upload-artifact@v4
+        with:
+          name: xf16cam-xr872-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
