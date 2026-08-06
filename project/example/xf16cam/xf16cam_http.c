@@ -2,12 +2,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "kernel/os/os.h"
 #include "driver/chip/hal_prcm.h"
 #include "driver/chip/hal_wdg.h"
 #include "lwip/sockets.h"
 #include "net/wlan/wlan.h"
+#include "ota/ota.h"
 
 #include "xf16cam_config.h"
 #include "xf16cam_http.h"
@@ -18,6 +20,14 @@
 #define XF16CAM_HTTP_REQUEST_SIZE (2048)
 #define XF16CAM_HTTP_SCAN_MAX     (12)
 #define XF16CAM_HTTP_STACK_SIZE   (3 * 1024)
+#define XF16CAM_OTA_MAX_SIZE      (468 * 1024)
+#define XF16CAM_HTTP_TIMEOUT_MS   (15000)
+
+enum {
+	XF16CAM_HTTP_KEEP_RUNNING = 0,
+	XF16CAM_HTTP_COLD_REBOOT,
+	XF16CAM_HTTP_OTA_REBOOT,
+};
 
 static OS_Thread_t g_http_thread;
 static char g_request[XF16CAM_HTTP_REQUEST_SIZE];
@@ -139,7 +149,13 @@ static void xf16cam_http_page(int fd)
 	                  "<script>async function scan(){let s=document.querySelector('#scan');s.textContent='Scanning...';"
 	                  "try{let a=await(await fetch('/api/scan')).json(),d=document.querySelector('#networks');d.innerHTML='';"
 	                  "a.forEach(n=>{let o=document.createElement('option');o.value=n.ssid;o.label=n.rssi+' dBm'+(n.secure?' secured':' open');d.append(o)});"
-	                  "s.textContent=a.length+' found'}catch(e){s.textContent='Scan failed'}}scan()</script></body></html>");
+	                  "s.textContent=a.length+' found'}catch(e){s.textContent='Scan failed'}}scan()</script>"
+	                  "<section><h2>Firmware update</h2><p>Select an XF16Cam OTA image. Keep power connected until it restarts.</p>"
+	                  "<input id=ota type=file accept=.img><button type=button onclick=update()>Install update</button> <span id=up></span></section>"
+	                  "<script>async function update(){let f=document.querySelector('#ota').files[0],s=document.querySelector('#up');"
+	                  "if(!f){s.textContent='Choose a file';return}if(!confirm('Install '+f.name+' and reboot?'))return;"
+	                  "s.textContent='Uploading...';try{let r=await fetch('/api/ota',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});"
+	                  "s.textContent=await r.text()}catch(e){s.textContent='Connection closed; check whether the camera restarted'}}</script></body></html>");
 }
 
 static int xf16cam_http_scan(void)
@@ -245,6 +261,58 @@ static void xf16cam_http_message(int fd, const char *status, const char *message
 	xf16cam_http_send_text(fd, "</p><a href='/'>Return</a></section></body></html>");
 }
 
+static char *xf16cam_http_header(char *request, char *header_end, const char *name)
+{
+	char *line = strstr(request, "\r\n");
+	size_t length = strlen(name);
+
+	while (line != NULL && line < header_end) {
+		line += 2;
+		if (line + length < header_end && strncasecmp(line, name, length) == 0 &&
+		    line[length] == ':')
+			return line + length + 1;
+		line = strstr(line, "\r\n");
+	}
+	return NULL;
+}
+
+static int xf16cam_http_ota(int fd, char *body, int body_length, int content_length)
+{
+	int written = 0;
+
+	if (content_length <= 0 || content_length > XF16CAM_OTA_MAX_SIZE) {
+		xf16cam_http_message(fd, "413 Payload Too Large", "Invalid OTA image size.");
+		return XF16CAM_HTTP_KEEP_RUNNING;
+	}
+	if (ota_push_init() != OTA_STATUS_OK || ota_push_start() != OTA_STATUS_OK)
+		goto fail;
+	if (body_length > content_length)
+		body_length = content_length;
+	if (body_length > 0 && ota_push_data((uint8_t *)body, body_length) != OTA_STATUS_OK)
+		goto fail;
+	written = body_length;
+	while (written < content_length) {
+		int wanted = content_length - written;
+		int count;
+		if (wanted > (int)sizeof(g_request))
+			wanted = sizeof(g_request);
+		count = recv(fd, g_request, wanted, 0);
+		if (count <= 0 || ota_push_data((uint8_t *)g_request, count) != OTA_STATUS_OK)
+			goto fail;
+		written += count;
+	}
+	if (ota_push_finish() != OTA_STATUS_OK)
+		goto fail;
+	xf16cam_http_begin(fd, "200 OK", "text/plain; charset=utf-8");
+	xf16cam_http_send_text(fd, "Update verified. Rebooting...");
+	return XF16CAM_HTTP_OTA_REBOOT;
+
+fail:
+	ota_push_stop();
+	xf16cam_http_message(fd, "400 Bad Request", "OTA verification failed; the current firmware is unchanged.");
+	return XF16CAM_HTTP_KEEP_RUNNING;
+}
+
 static int xf16cam_http_handle(int fd)
 {
 	char method[8];
@@ -258,6 +326,7 @@ static int xf16cam_http_handle(int fd)
 	char psk[XF16CAM_PSK_MAX_LEN + 1];
 
 	memset(g_request, 0, sizeof(g_request));
+	header_end = NULL;
 	while (received < (int)sizeof(g_request) - 1) {
 		int count = recv(fd, g_request + received, sizeof(g_request) - 1 - received, 0);
 		if (count <= 0)
@@ -265,21 +334,37 @@ static int xf16cam_http_handle(int fd)
 		received += count;
 		g_request[received] = '\0';
 		header_end = strstr(g_request, "\r\n\r\n");
-		if (header_end != NULL) {
-			length_header = strstr(g_request, "Content-Length:");
-			if (length_header != NULL)
-				content_length = atoi(length_header + strlen("Content-Length:"));
-			body = header_end + 4;
-			if (received - (body - g_request) >= content_length)
-				break;
-		}
+		if (header_end != NULL)
+			break;
 	}
 	if (sscanf(g_request, "%7s %95s", method, path) != 2) {
 		xf16cam_http_message(fd, "400 Bad Request", "Malformed request.");
 		return 0;
 	}
 	header_end = strstr(g_request, "\r\n\r\n");
+	if (header_end == NULL) {
+		xf16cam_http_message(fd, "431 Request Header Fields Too Large", "Request headers are too large.");
+		return XF16CAM_HTTP_KEEP_RUNNING;
+	}
 	body = header_end ? header_end + 4 : g_request + received;
+	length_header = xf16cam_http_header(g_request, header_end, "Content-Length");
+	if (length_header != NULL)
+		content_length = atoi(length_header);
+
+	if (strcmp(method, "POST") == 0 && strcmp(path, "/api/ota") == 0)
+		return xf16cam_http_ota(fd, body, received - (body - g_request), content_length);
+
+	if (content_length > (int)(sizeof(g_request) - 1 - (body - g_request))) {
+		xf16cam_http_message(fd, "413 Payload Too Large", "Request body is too large.");
+		return XF16CAM_HTTP_KEEP_RUNNING;
+	}
+	while (received - (body - g_request) < content_length) {
+		int count = recv(fd, g_request + received, sizeof(g_request) - 1 - received, 0);
+		if (count <= 0)
+			return XF16CAM_HTTP_KEEP_RUNNING;
+		received += count;
+		g_request[received] = '\0';
+	}
 
 	if (strcmp(method, "GET") == 0 && strcmp(path, "/") == 0) {
 		xf16cam_http_page(fd);
@@ -294,14 +379,14 @@ static int xf16cam_http_handle(int fd)
 			return 0;
 		}
 		xf16cam_http_message(fd, "200 OK", "Settings saved. Rebooting into station mode...");
-		return 1;
+		return XF16CAM_HTTP_COLD_REBOOT;
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/ap") == 0) {
 		if (xf16cam_config_save_ap() != 0) {
 			xf16cam_http_message(fd, "500 Internal Server Error", "Could not save setup AP mode.");
 			return 0;
 		}
 		xf16cam_http_message(fd, "200 OK", "Setup AP restored. Rebooting...");
-		return 1;
+		return XF16CAM_HTTP_COLD_REBOOT;
 	} else {
 		xf16cam_http_message(fd, "404 Not Found", "Page not found.");
 	}
@@ -330,13 +415,16 @@ static void xf16cam_http_task(void *arg)
 	printf("xf16cam HTTP ready: http://%s/\n", xf16cam_net_ip());
 	while (1) {
 		int client = accept(server, NULL, NULL);
-		int reboot;
+		int action;
 		if (client < 0)
 			continue;
-		reboot = xf16cam_http_handle(client);
+		setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &((int){XF16CAM_HTTP_TIMEOUT_MS}), sizeof(int));
+		action = xf16cam_http_handle(client);
 		closesocket(client);
-		if (reboot) {
+		if (action != XF16CAM_HTTP_KEEP_RUNNING) {
 			OS_MSleep(750);
+			if (action == XF16CAM_HTTP_OTA_REBOOT)
+				ota_reboot();
 			HAL_PRCM_SetCPUABootFlag(PRCM_CPUA_BOOT_FROM_COLD_RESET);
 			HAL_WDG_Reboot();
 		}

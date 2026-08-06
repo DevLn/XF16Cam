@@ -6,6 +6,7 @@ into a single-client RTSP stream without PSRAM or an SD card.
 - First boot starts setup AP `XF16CAM` / `xf16camera` at `192.168.4.1`.
 - Its DHCP server leases `192.168.4.100` to the setup client.
 - Open `http://192.168.4.1/` to scan for Wi-Fi and save STA credentials.
+- The same page accepts a streamed, verified OTA image and then reboots.
 - Saved settings use a dedicated FDCM sector and survive firmware reflashing.
 - A failed STA connection falls back to the setup AP.
 - Serial recovery: `wifi ap` or `wifi sta <ssid> <password>` saves the same
@@ -28,6 +29,7 @@ The GitHub Actions workflow builds with Arm GNU Toolchain 8-2019-q3 on
 Ubuntu 22.04. Each run uploads an `xf16cam-xr872` artifact containing:
 
 - `xf16cam-xr872-v<version>.img`: the complete image for serial flashing
+- `xf16cam-xr872-v<version>-ota.img`: compressed image for the web updater
 - `SHA256SUMS`: image checksum
 - `size.txt`: linked application memory usage
 
@@ -41,7 +43,24 @@ chmod +x tools/mkimage
 make -C project/example/xf16cam/gcc \
   CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" \
   -j"$(nproc)" image
+make -C project/example/xf16cam/gcc \
+  CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" image_xz
 ```
 
 The flashable result is
-`project/example/xf16cam/image/xr872/xr_system.img`.
+`project/example/xf16cam/image/xr872/xr_system.img`; its web-update partner is
+`xr_system_img_xz.img` in the same directory.
+
+## 1 MiB flash layout
+
+- `0-540 KiB`: bootloader, application, and WLAN firmware
+- `540-544 KiB`: reserved primary-image margin
+- `544-548 KiB`: SDK OTA metadata
+- `548-1016 KiB`: compressed, verified OTA staging image
+- `1016-1020 KiB`: XF16Cam configuration (FDCM)
+- `1020-1024 KiB`: SDK system information
+
+An upload is written directly to the staging area in 2 KiB pieces. It is not
+selected by the bootloader until its image structure and MD5 have passed SDK
+verification, so a failed or interrupted upload leaves the current firmware
+bootable. Do not upload the full serial image through the web page.

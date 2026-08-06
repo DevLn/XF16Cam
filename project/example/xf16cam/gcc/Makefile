@@ -72,6 +72,7 @@ OBJS := $(addsuffix .o,$(SRCS))
 #   - define your own "IMAGE_CFG" to override the default one
 # IMAGE_CFG :=
 IMAGE_CFG := image_auto_cal.cfg
+IMAGE_XZ_CFG := image_img_xz.cfg
 
 # image name, default to xr_system
 # IMAGE_NAME :=

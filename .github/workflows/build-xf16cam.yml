@@ -41,6 +41,12 @@ jobs:
             CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" \
             -j"$(nproc)" image
 
+      - name: Build OTA image
+        shell: bash
+        run: |
+          make -C project/example/xf16cam/gcc \
+            CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" image_xz
+
       - name: Package flash image
         shell: bash
         run: |
@@ -50,6 +56,8 @@ jobs:
           mkdir -p dist
           cp project/example/xf16cam/image/xr872/xr_system.img \
             "dist/xf16cam-xr872-v${version}.img"
+          cp project/example/xf16cam/image/xr872/xr_system_img_xz.img \
+            "dist/xf16cam-xr872-v${version}-ota.img"
           arm-none-eabi-size project/example/xf16cam/gcc/xf16cam.axf \
             | tee dist/size.txt
           sha256sum dist/*.img > dist/SHA256SUMS
