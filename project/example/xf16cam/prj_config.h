@@ -62,6 +62,13 @@ extern "C" {
 /* console enable/disable */
 #define PRJCONF_CONSOLE_EN              1
 
+/* FDCM settings occupy the penultimate 4 KiB flash sector. The SDK keeps
+ * its sysinfo/MAC data in the final sector at 0xFF000. */
+#define XF16CAM_CONFIG_FLASH             0
+#define XF16CAM_CONFIG_ADDR              (1016 * 1024)
+#define XF16CAM_CONFIG_SIZE              (4 * 1024)
+#define PRJCONF_SYSINFO_SAVE_TO_FLASH    1
+
 /* Wi-Fi/lwIP are started only by this xf16cam example. */
 #define PRJCONF_NET_EN                  1
 

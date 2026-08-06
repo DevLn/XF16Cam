@@ -44,17 +44,21 @@ jobs:
       - name: Package flash image
         shell: bash
         run: |
+          version="$(sed -n 's/^#define XF16CAM_VERSION "\([^"]*\)"/\1/p' \
+            project/example/xf16cam/xf16cam_version.h)"
+          test -n "$version"
           mkdir -p dist
           cp project/example/xf16cam/image/xr872/xr_system.img \
-            dist/xf16cam-xr872.img
+            "dist/xf16cam-xr872-v${version}.img"
           arm-none-eabi-size project/example/xf16cam/gcc/xf16cam.axf \
             | tee dist/size.txt
-          sha256sum dist/xf16cam-xr872.img > dist/SHA256SUMS
+          sha256sum dist/*.img > dist/SHA256SUMS
+          echo "XF16CAM_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Upload flash image
         uses: actions/upload-artifact@v4
         with:
-          name: xf16cam-xr872-${{ github.sha }}
+          name: xf16cam-xr872-v${{ env.XF16CAM_VERSION }}-${{ github.sha }}
           path: dist/
           if-no-files-found: error
           compression-level: 0

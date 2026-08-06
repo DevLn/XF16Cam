@@ -19,6 +19,11 @@
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 
+#include "xf16cam_config.h"
+#include "xf16cam_http.h"
+#include "xf16cam_net.h"
+#include "xf16cam_version.h"
+
 #define JPEG_ONLINE_EN           (1)
 #define JPEG_BUFFER_COUNT        (2)
 #define JPEG_SRAM_SIZE           (106 * 1024)
@@ -26,14 +31,6 @@
 #define JPEG_BUFF_SIZE           (50 * 1024)
 #define JPEG_IMAGE_WIDTH         (320)
 #define JPEG_IMAGE_HEIGHT        (240)
-#define XF16_DEMO_REVISION       "rtsp-poc1"
-#define XF16CAM_WIFI_AP          (1)
-#define XF16CAM_WIFI_STA         (2)
-#define XF16CAM_WIFI_MODE        XF16CAM_WIFI_STA
-#define XF16CAM_AP_SSID          "XF16CAM"
-#define XF16CAM_AP_PSK           "xf16camera"
-#define XF16CAM_STA_SSID         "test"
-#define XF16CAM_STA_PSK          "1234abcd"
 #define XF16CAM_RTSP_PORT        (8554)
 #define XF16CAM_RTP_MTU          (1300)
 #define XF16CAM_RTP_SSRC         (0x58463136UL)
@@ -677,36 +674,11 @@ static int xf16cam_stream_client(int fd, const char *ip)
 	return 0;
 }
 
-static int xf16cam_start_wifi(void)
-{
-#if XF16CAM_WIFI_MODE == XF16CAM_WIFI_STA
-	printf("xf16cam starting STA ssid=%s\n", XF16CAM_STA_SSID);
-	net_switch_mode(WLAN_MODE_STA);
-	wlan_sta_disable();
-	wlan_sta_set((uint8_t *)XF16CAM_STA_SSID, strlen(XF16CAM_STA_SSID),
-		     (uint8_t *)XF16CAM_STA_PSK);
-	wlan_sta_enable();
-#else
-	printf("xf16cam starting AP ssid=%s psk=%s\n", XF16CAM_AP_SSID, XF16CAM_AP_PSK);
-	net_switch_mode(WLAN_MODE_HOSTAP);
-	wlan_ap_disable();
-	wlan_ap_set((uint8_t *)XF16CAM_AP_SSID, strlen(XF16CAM_AP_SSID),
-		    (uint8_t *)XF16CAM_AP_PSK);
-	wlan_ap_enable();
-#endif
-	while (!(g_wlan_netif && NETIF_IS_AVAILABLE(g_wlan_netif)))
-		OS_MSleep(100);
-	printf("xf16cam Wi-Fi ready: mode=%s ip=%s\n",
-	       XF16CAM_WIFI_MODE == XF16CAM_WIFI_STA ? "STA" : "AP",
-	       ipaddr_ntoa(&g_wlan_netif->ip_addr));
-	return 0;
-}
-
 static void xf16cam_rtsp_server(void)
 {
 	int server;
 	struct sockaddr_in addr;
-	const char *ip = ipaddr_ntoa(&g_wlan_netif->ip_addr);
+	const char *ip = xf16cam_net_ip();
 
 	server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (server < 0) {
@@ -737,7 +709,7 @@ static void xf16cam_rtsp_server(void)
 int main(void)
 {
 	platform_init();
-	printf("xf16cam started (" XF16_DEMO_REVISION ")\n");
+	printf("xf16cam version %s\n", XF16CAM_VERSION);
 
 	/* Reserve the one large contiguous block before AP/DHCP activity can
 	 * fragment the heap. No capture starts until an RTSP client sends PLAY. */
@@ -746,7 +718,10 @@ int main(void)
 		camera_mem_destroy();
 		return -1;
 	}
-	xf16cam_start_wifi();
+	xf16cam_config_init();
+	if (xf16cam_net_start(xf16cam_config_get()) != 0)
+		return -1;
+	xf16cam_http_start();
 	xf16cam_rtsp_server();
 	camera_deinit();
 	return -1;
