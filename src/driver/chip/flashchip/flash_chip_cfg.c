@@ -117,6 +117,36 @@ static const FlashChipCfg simpleFlashChipCfg[] = {
 		.mMaxReadFreq = 55 * 1000 * 1000,
 	},
 #endif
+#ifdef FLASH_ZB25WD80
+	{
+		/* A9/XF16 factory profile: JEDEC bytes 5E 32 14. */
+		.mJedec = 0x14325E,
+		.mSize = 16 * 16 * 0x1000,
+		.mEraseSizeSupport = FLASH_ERASE_64KB | FLASH_ERASE_32KB | FLASH_ERASE_4KB | FLASH_ERASE_CHIP,
+		.mPageProgramSupport = FLASH_PAGEPROGRAM,
+		.mReadStausSupport = FLASH_STATUS1 | FLASH_STATUS2 | FLASH_STATUS3,
+		.mWriteStatusSupport = FLASH_STATUS1 | FLASH_STATUS2 | FLASH_STATUS3,
+		.mReadSupport = FLASH_READ_NORMAL_MODE | FLASH_READ_FAST_MODE | FLASH_READ_DUAL_O_MODE |
+		                FLASH_READ_DUAL_IO_MODE,
+		.mMaxFreq = -1,
+		.mMaxReadFreq = -1,
+	},
+#endif
+#ifdef FLASH_T25S80
+	{
+		/* A9/XF16 factory profile: JEDEC bytes C7 40 14. */
+		.mJedec = 0x1440C7,
+		.mSize = 16 * 16 * 0x1000,
+		.mEraseSizeSupport = FLASH_ERASE_64KB | FLASH_ERASE_32KB | FLASH_ERASE_4KB | FLASH_ERASE_CHIP,
+		.mPageProgramSupport = FLASH_PAGEPROGRAM,
+		.mReadStausSupport = FLASH_STATUS1 | FLASH_STATUS2 | FLASH_STATUS3,
+		.mWriteStatusSupport = FLASH_STATUS1 | FLASH_STATUS2 | FLASH_STATUS3,
+		.mReadSupport = FLASH_READ_NORMAL_MODE | FLASH_READ_FAST_MODE | FLASH_READ_DUAL_O_MODE |
+		                FLASH_READ_DUAL_IO_MODE,
+		.mMaxFreq = -1,
+		.mMaxReadFreq = -1,
+	},
+#endif
 #ifdef FLASH_PN25F16
 	{
 		/* FLASH_PN25F16 */

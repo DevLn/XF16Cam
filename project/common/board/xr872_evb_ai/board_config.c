@@ -169,7 +169,7 @@ static const FlashBoardCfg g_flash_cfg[] = {
 #if defined(__CONFIG_DEFAULT_FLASH_FLASHC)
 	    .type = FLASH_DRV_FLASHC,
 	    .mode = FLASH_READ_DUAL_O_MODE,
-	    .flashc.clk = (96 * 1000 * 1000),
+	    .flashc.clk = (48 * 1000 * 1000),
 #elif defined(__CONFIG_DEFAULT_FLASH_SPI)
 	    .type = FLASH_DRV_SPI,
 	    .mode = FLASH_READ_FAST_MODE,

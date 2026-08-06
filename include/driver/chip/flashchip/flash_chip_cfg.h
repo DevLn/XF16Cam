@@ -48,6 +48,10 @@ extern "C" {
 
 #define FLASH_PN25F08
 
+/* A9/XF16 factory 1 MiB flash profiles. */
+#define FLASH_ZB25WD80
+#define FLASH_T25S80
+
 #define FLASH_PN25F16
 
 #define FLASH_XT25F16B
