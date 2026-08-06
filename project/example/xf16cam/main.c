@@ -14,7 +14,6 @@
 #include "driver/chip/hal_i2c.h"
 #include "driver/chip/hal_prcm.h"
 #include "driver/component/csi_camera/camera.h"
-#include "driver/component/csi_camera/gc0328c/drv_gc0328c.h"
 #include "net/wlan/wlan.h"
 #include "net/wlan/wlan_defs.h"
 #include "lwip/inet.h"
@@ -26,6 +25,7 @@
 #include "xf16cam_http.h"
 #include "xf16cam_media.h"
 #include "xf16cam_net.h"
+#include "xf16cam_sensor.h"
 #include "xf16cam_storage.h"
 #include "xf16cam_version.h"
 
@@ -47,9 +47,6 @@
 #define XF16_FACTORY_PA23_PORT    GPIO_PORT_A
 #define XF16_FACTORY_PA23_PIN     GPIO_PIN_23
 #define XF16_FACTORY_PA23_PULSE_MS (100)
-#define XF16_SETTLE_MS           (100)
-#define XF16_GC0328_ADDR         (0x21)
-#define XF16_GC0328_CHIP_ID      (0x9d)
 #define XF16_SAME_PIN_PWR(_port, _pin) \
 	{ \
 		.Reset_Port = (_port), \
@@ -58,46 +55,15 @@
 		.Pwdn_Pin = (_pin), \
 	}
 
-typedef struct {
-	const char *name;
-	const SENSOR_Func *hooks;
-	uint8_t addr;
-	uint8_t id_reg;
-	uint8_t id_value;
-	uint32_t width;
-	uint32_t height;
-} XF16_SensorBackend;
-
-static HAL_Status xf16_sensor_detect_wrapper(SENSOR_ConfigParam *cfg);
-static void xf16_sensor_dispatch_deinit(SENSOR_ConfigParam *cfg);
-static HAL_Status xf16_sensor_dispatch_ioctl(SENSOR_IoctrlCmd attr, uint32_t arg);
 static void xf16_release_camera_wakeup_hold(void);
 static void xf16_camera_ctrl_prehold_low(void);
 static void xf16_factory_pa23_prepare(void);
 
 static uint8_t *gmemaddr;
 static CAMERA_Mgmt mem_mgmt;
-static const XF16_SensorBackend *g_selected_backend;
 static OS_Thread_t g_mjpeg_thread;
 static volatile int g_mjpeg_active;
 
-static const SENSOR_Func g_gc0328_hooks = {
-	.init = HAL_GC0328C_Init,
-	.deinit = HAL_GC0328C_DeInit,
-	.suspend = HAL_GC0328C_Suspend,
-	.resume = HAL_GC0328C_Resume,
-	.ioctl = HAL_GC0328C_IoCtl,
-};
-
-static const XF16_SensorBackend g_gc0328_backend = {
-	.name = "gc0328",
-	.hooks = &g_gc0328_hooks,
-	.addr = XF16_GC0328_ADDR,
-	.id_reg = 0xf0,
-	.id_value = XF16_GC0328_CHIP_ID,
-	.width = JPEG_IMAGE_WIDTH,
-	.height = JPEG_IMAGE_HEIGHT,
-};
 static CAMERA_Cfg camera_cfg = {
 	.jpeg_cfg.jpeg_en = 1,
 	.jpeg_cfg.quality = 60,
@@ -115,9 +81,9 @@ static CAMERA_Cfg camera_cfg = {
 	.sensor_cfg.i2c_id = XF16_SENSOR_I2C_ID,
 	.sensor_cfg.pwcfg = XF16_SAME_PIN_PWR(XF16_CTRL_PORT, XF16_CTRL_PIN),
 
-	.sensor_func.init = xf16_sensor_detect_wrapper,
-	.sensor_func.deinit = xf16_sensor_dispatch_deinit,
-	.sensor_func.ioctl = xf16_sensor_dispatch_ioctl,
+	.sensor_func.init = xf16cam_sensor_init,
+	.sensor_func.deinit = xf16cam_sensor_deinit,
+	.sensor_func.ioctl = xf16cam_sensor_ioctl,
 };
 
 /* XF16 board-specific camera rail and control-pin preparation. */
@@ -162,144 +128,6 @@ static void xf16_board_camera_power_prepare(void)
 	xf16_release_camera_wakeup_hold();
 	xf16_factory_pa23_prepare();
 	xf16_camera_ctrl_prehold_low();
-}
-
-/* Factory-style GC0328 detect wrapper used by HAL_CAMERA_Init(). */
-static void xf16_drive_ctrl(GPIO_PinState state)
-{
-	GPIO_InitParam param;
-
-	param.driving = GPIO_DRIVING_LEVEL_1;
-	param.mode = GPIOx_Pn_F1_OUTPUT;
-	param.pull = GPIO_PULL_NONE;
-	HAL_GPIO_Init(XF16_CTRL_PORT, XF16_CTRL_PIN, &param);
-	HAL_GPIO_WritePin(XF16_CTRL_PORT, XF16_CTRL_PIN, state);
-	OS_MSleep(XF16_SETTLE_MS);
-}
-
-static int xf16_sccb_write_reg(I2C_ID bus, uint8_t dev_addr, uint8_t reg, uint8_t value)
-{
-	int32_t ret;
-	uint8_t tmp = value;
-
-	ret = HAL_I2C_SCCB_Master_Transmit_IT(bus, dev_addr, reg, &tmp);
-	return ret == 1;
-}
-
-static int xf16_sccb_read_reg(I2C_ID bus, uint8_t dev_addr, uint8_t reg, uint8_t *value)
-{
-	int32_t ret;
-
-	*value = 0;
-	ret = HAL_I2C_SCCB_Master_Receive_IT(bus, dev_addr, reg, value);
-	return ret == 1;
-}
-
-static int xf16_probe_gc0328(I2C_ID bus, const char *phase, uint8_t *chip_id)
-{
-	uint8_t value;
-
-	if (!xf16_sccb_write_reg(bus, g_gc0328_backend.addr, 0xfe, 0x00))
-		return 0;
-	if (!xf16_sccb_read_reg(bus, g_gc0328_backend.addr, g_gc0328_backend.id_reg, &value))
-		return 0;
-	*chip_id = value;
-	if (value == g_gc0328_backend.id_value) {
-		printf("xf16cam camera: %s detected (id=0x%02x)\n",
-		       g_gc0328_backend.name, value);
-		return 1;
-	}
-	printf("xf16 gc0328 probe mismatch phase=%s got=0x%02x expect=0x%02x\n",
-	       phase,
-	       value,
-	       g_gc0328_backend.id_value);
-	return 0;
-}
-
-static HAL_Status xf16_sccb_init_bus(I2C_ID bus)
-{
-	I2C_InitParam initParam;
-	HAL_Status status;
-
-	initParam.addrMode = I2C_ADDR_MODE_7BIT;
-	initParam.clockFreq = 100000;
-	status = HAL_I2C_Init(bus, &initParam);
-	if (status != HAL_OK)
-		printf("xf16cam camera: SCCB init failed (%ld)\n", (long)status);
-	return status;
-}
-
-static void xf16_sccb_deinit_bus(I2C_ID bus)
-{
-	HAL_I2C_DeInit(bus);
-}
-
-static HAL_Status xf16_call_selected_backend(SENSOR_ConfigParam *cfg)
-{
-	HAL_Status status;
-
-	if (!g_selected_backend || !g_selected_backend->hooks || !g_selected_backend->hooks->init)
-		return HAL_ERROR;
-
-	HAL_I2C_DeInit((I2C_ID)cfg->i2c_id);
-	status = g_selected_backend->hooks->init(cfg);
-	if (status == HAL_OK) {
-		camera_cfg.jpeg_cfg.width = g_selected_backend->width;
-		camera_cfg.jpeg_cfg.height = g_selected_backend->height;
-	}
-	return status;
-}
-
-static HAL_Status xf16_sensor_detect_wrapper(SENSOR_ConfigParam *cfg)
-{
-	HAL_Status status;
-	uint8_t chip_id = 0;
-	I2C_ID bus;
-
-	if (!cfg)
-		return HAL_ERROR;
-
-	bus = (I2C_ID)cfg->i2c_id;
-	g_selected_backend = NULL;
-
-	xf16_drive_ctrl(GPIO_PIN_HIGH);
-	status = xf16_sccb_init_bus(bus);
-	if (status != HAL_OK)
-		return HAL_ERROR;
-
-	if (xf16_probe_gc0328(bus, "primary_high", &chip_id)) {
-		g_selected_backend = &g_gc0328_backend;
-		return xf16_call_selected_backend(cfg);
-	}
-
-	xf16_sccb_deinit_bus(bus);
-	xf16_drive_ctrl(GPIO_PIN_LOW);
-	status = xf16_sccb_init_bus(bus);
-	if (status != HAL_OK)
-		return HAL_ERROR;
-
-	if (xf16_probe_gc0328(bus, "fallback_low", &chip_id)) {
-		g_selected_backend = &g_gc0328_backend;
-		return xf16_call_selected_backend(cfg);
-	}
-
-	xf16_sccb_deinit_bus(bus);
-	printf("xf16 gc0328 detect failed: last_chip=0x%02x\n", chip_id);
-	return HAL_ERROR;
-}
-
-static void xf16_sensor_dispatch_deinit(SENSOR_ConfigParam *cfg)
-{
-	if (g_selected_backend && g_selected_backend->hooks && g_selected_backend->hooks->deinit)
-		g_selected_backend->hooks->deinit(cfg);
-	g_selected_backend = NULL;
-}
-
-static HAL_Status xf16_sensor_dispatch_ioctl(SENSOR_IoctrlCmd attr, uint32_t arg)
-{
-	if (g_selected_backend && g_selected_backend->hooks && g_selected_backend->hooks->ioctl)
-		return g_selected_backend->hooks->ioctl(attr, arg);
-	return HAL_ERROR;
 }
 
 /* JPEG demo buffer, capture, and SD-file handling. */
@@ -634,10 +462,10 @@ static int xf16cam_rtsp_reply(int fd, const char *request, const char *ip,
 			     cseq);
 	} else if (!strncmp(request, "DESCRIBE ", 9)) {
 		int sdp_len = snprintf(sdp, sizeof(sdp),
-			"v=0\r\no=- 0 0 IN IP4 %s\r\ns=XF16 GC0328\r\nc=IN IP4 %s\r\nt=0 0\r\n"
+			"v=0\r\no=- 0 0 IN IP4 %s\r\ns=XF16 %s\r\nc=IN IP4 %s\r\nt=0 0\r\n"
 			"m=video 0 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=control:track1\r\n"
 			"m=audio 0 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000/1\r\na=control:track2\r\n",
-			ip, ip);
+			ip, xf16cam_sensor_name(), ip);
 		n = snprintf(response, sizeof(response),
 			     "RTSP/1.0 200 OK\r\nCSeq: %d\r\nContent-Base: rtsp://%s:%u/stream/\r\n"
 			     "Content-Type: application/sdp\r\nContent-Length: %d\r\n\r\n%s",

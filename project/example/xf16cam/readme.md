@@ -20,6 +20,8 @@ into a single-client RTSP stream without PSRAM or an SD card.
   The page reports total/free space and can explicitly format a card as FAT32.
 - Transport: RTP/JPEG (RFC 2435) interleaved over RTSP/TCP
 - Image: 320 x 240, JPEG quality 60
+- Sensor probing and driver dispatch use a small descriptor registry; adding a
+  supported QVGA sensor does not require changes to the shared camera core.
 
 For VLC, force RTSP-over-TCP if it does not select it automatically. For
 FFmpeg/ffplay use `-rtsp_transport tcp`.

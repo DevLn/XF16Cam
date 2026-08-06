@@ -18,6 +18,7 @@
 #include "xf16cam_http.h"
 #include "xf16cam_media.h"
 #include "xf16cam_net.h"
+#include "xf16cam_sensor.h"
 #include "xf16cam_storage.h"
 #include "xf16cam_version.h"
 
@@ -25,7 +26,7 @@
 #define XF16CAM_HTTP_REQUEST_SIZE (2048)
 #define XF16CAM_HTTP_SCAN_MAX     (12)
 #define XF16CAM_HTTP_STACK_SIZE   (3 * 1024)
-#define XF16CAM_OTA_MAX_SIZE      (468 * 1024)
+#define XF16CAM_OTA_MAX_SIZE      (372 * 1024)
 #define XF16CAM_HTTP_TIMEOUT_MS   (15000)
 
 enum {
@@ -167,7 +168,7 @@ static void xf16cam_http_page(int fd)
 	                  "<h1>XF16Cam</h1><p class=ok>Firmware %s</p>"
 	                  "<section><h2>Device</h2><div class=grid>"
 	                  "<b>Network mode</b><span>%s</span><b>IP address</b><span>%s</span>"
-	                  "<b>Free SRAM</b><span>%lu bytes</span><b>Camera</b><span>GC0328, 320x240 JPEG</span>"
+	                  "<b>Free SRAM</b><span>%lu bytes</span><b>Camera</b><span>%s, %ux%u JPEG</span>"
 	                  "<b>Flash JEDEC ID</b><span>%06lx</span><b>Flash capacity</b><span>%lu KiB</span>"
 	                  "<b>Microphone</b><span>%s; peak <span id=mic>%u</span>/32768</span>"
 	                  "<b>Mode button</b><span>PA15 (%s)</span>"
@@ -175,6 +176,8 @@ static void xf16cam_http_page(int fd)
 	                  XF16CAM_VERSION,
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Setup AP",
 	                  xf16cam_net_ip(), (unsigned long)xf16cam_http_heap_headroom(),
+	                  xf16cam_sensor_name(), (unsigned int)xf16cam_sensor_width(),
+	                  (unsigned int)xf16cam_sensor_height(),
 	                  (unsigned long)(flash_jedec & 0xffffff), (unsigned long)(flash_size / 1024),
 	                  audio->active ? "AMIC active, PCMU/8000" : "AMIC unavailable", audio->peak,
 	                  xf16cam_board_mode_button_pressed() ? "pressed" : "released",
