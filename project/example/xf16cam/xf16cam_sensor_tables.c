@@ -2,6 +2,10 @@
 
 #include "xf16cam_sensor_tables.h"
 
+/* Keep the hardware-validated factory GC0328 sequence byte-exact while using
+ * the same compact table loader as every other XF16Cam sensor. */
+#include "../../../../src/driver/component/csi_camera/gc0328c/gc0328c_cfg.h"
+
 /*
  * Factory-derived register/value sequences supplied in the XF16 camera
  * research bundle. HI704 is shared by FTY/X5/X6 (SHA-256 21cc3bc8...),

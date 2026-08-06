@@ -45,6 +45,10 @@ DIRS += $(PRJ_BOARD)
 
 SRCS := $(basename $(foreach dir,$(DIRS),$(wildcard $(dir)/*.[csS])))
 
+# XF16Cam owns camera capture and sensor dispatch. Do not link the SDK camera
+# console demo, its one-shot capture paths, or its native sensor dependency.
+SRCS := $(filter-out $(ROOT_PATH)/project/common/cmd/cmd_camera,$(SRCS))
+
 OBJS := $(addsuffix .o,$(SRCS))
 
 # extra libraries searching path

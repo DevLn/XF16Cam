@@ -29,7 +29,7 @@ single-client RTSP stream without PSRAM or an SD card.
 
 ## Camera sensors
 
-- GC0328 (`0x9d`): native XR872 driver, QVGA, hardware validated on XF16.
+- GC0328 (`0x9d`): factory QVGA table, hardware validated on XF16.
 - GC0308 (`0x9b`): compacted XR872 SDK VGA table, hardware half-scaled to QVGA;
   compiled but awaiting matching-sensor validation.
 - HI704 (`0x96`): factory FTY/X5/X6 VGA table, hardware half-scaled to QVGA;
@@ -52,6 +52,8 @@ three tables beyond this research firmware.
 For VLC, force RTSP-over-TCP if it does not select it automatically. For
 FFmpeg/ffplay use `-rtsp_transport tcp`.
 
+All sensors, including GC0328, use the same probe and retrying table loader;
+GC0328 retains its validated power-cycle, register-delay, and settle timings.
 The capture arena contains two 50 KiB JPEG buffers and no YUV framebuffer.
 Camera power, CSI/JPEG, Wi-Fi, and the RTSP listener are initialized only by
 this example. `PRJCONF_CONSOLE_EN` remains enabled for serial recovery and

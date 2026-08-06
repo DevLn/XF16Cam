@@ -1,6 +1,6 @@
 #ifndef XF16CAM_VERSION_H
 #define XF16CAM_VERSION_H
 
-#define XF16CAM_VERSION "0.12.0"
+#define XF16CAM_VERSION "0.12.1"
 
 #endif

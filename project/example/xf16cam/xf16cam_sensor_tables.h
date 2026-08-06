@@ -3,6 +3,11 @@
 
 #include <stdint.h>
 
+extern const uint8_t gc0328c_init_reg_tbl[][2];
+#define XF16CAM_GC0328_TABLE_SIZE 748
+extern const uint8_t gc0328c_post_init_reg_tbl[][2];
+#define XF16CAM_GC0328_POST_TABLE_SIZE 28
+
 extern const uint8_t xf16cam_gc0308_table[];
 #define XF16CAM_GC0308_TABLE_SIZE 510
 extern const uint8_t xf16cam_hi704_table[];

@@ -83,7 +83,7 @@ static CAMERA_Cfg camera_cfg = {
 
 	.sensor_func.init = xf16cam_sensor_init,
 	.sensor_func.deinit = xf16cam_sensor_deinit,
-	.sensor_func.ioctl = xf16cam_sensor_ioctl,
+	.sensor_func.ioctl = NULL,
 };
 
 /* XF16 board-specific camera rail and control-pin preparation. */

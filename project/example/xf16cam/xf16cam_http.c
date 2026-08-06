@@ -272,11 +272,14 @@ static void xf16cam_http_page(int fd)
 	                  "<div id=system class=panel><section class=card><h2>Device</h2><div class=grid>");
 	length = snprintf(dynamic, sizeof(dynamic),
 	                  "<b>Network mode</b><span>%s</span><b>IP address</b><span>%s</span>"
-	                  "<b>Free SRAM</b><span>%lu bytes</span><b>Flash JEDEC ID</b><span>%06lx</span>"
+	                  "<b>Free SRAM</b><span>%lu bytes</span><b>Flash JEDEC ID</b><span>%02lX %02lX %02lX</span>"
 	                  "<b>Flash capacity</b><span>%lu KiB</span><b>Mode button</b><span>PA15 (%s)</span>"
 	                  "<b>Setup button</b><span>PA20 (%s)</span></div></section>",
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Setup AP", xf16cam_net_ip(),
-	                  (unsigned long)xf16cam_http_heap_headroom(), (unsigned long)(flash_jedec & 0xffffff),
+	                  (unsigned long)xf16cam_http_heap_headroom(),
+	                  (unsigned long)(flash_jedec & 0xff),
+	                  (unsigned long)((flash_jedec >> 8) & 0xff),
+	                  (unsigned long)((flash_jedec >> 16) & 0xff),
 	                  (unsigned long)(flash_size / 1024),
 	                  xf16cam_board_mode_button_pressed() ? "pressed" : "released",
 	                  xf16cam_board_reset_button_pressed() ? "pressed" : "released");

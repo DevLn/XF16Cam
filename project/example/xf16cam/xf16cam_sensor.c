@@ -4,48 +4,54 @@
 #include "driver/chip/hal_gpio.h"
 #include "driver/chip/hal_i2c.h"
 #include "driver/component/csi_camera/camera.h"
-#include "driver/component/csi_camera/gc0328c/drv_gc0328c.h"
 #include "kernel/os/os.h"
 
 #include "xf16cam_sensor.h"
 #include "xf16cam_sensor_tables.h"
 
 #define XF16CAM_SENSOR_SETTLE_MS (100)
+#define XF16CAM_SENSOR_WRITE_ATTEMPTS (4)
 
 typedef struct {
 	const char *name;
-	const SENSOR_Func *driver;
+	const uint8_t *table;
+	const uint8_t *post_table;
+	uint16_t table_size;
+	uint16_t post_table_size;
+	uint16_t init_settle_ms;
+	uint16_t input_width;
+	uint16_t input_height;
+	uint16_t output_width;
+	uint16_t output_height;
 	uint8_t address;
 	uint8_t bank_register;
 	uint8_t bank_value;
 	uint8_t id_register;
 	uint8_t id_value;
-	const uint8_t *table;
-	uint16_t table_size;
-	uint16_t input_width;
-	uint16_t input_height;
-	uint16_t output_width;
-	uint16_t output_height;
+	uint8_t power_cycle;
+	uint8_t delay_register[2];
+	uint8_t delay_value[2];
+	uint8_t delay_ms[2];
 } XF16CamSensor;
 
-__xip_rodata static const SENSOR_Func g_gc0328_driver = {
-	.init = HAL_GC0328C_Init,
-	.deinit = HAL_GC0328C_DeInit,
-	.suspend = HAL_GC0328C_Suspend,
-	.resume = HAL_GC0328C_Resume,
-	.ioctl = HAL_GC0328C_IoCtl,
-};
-
-/* Native SDK drivers and compact register-table backends share one probe list. */
+/* Every sensor shares one compact probe and register-table backend. */
 __xip_rodata static const XF16CamSensor g_sensors[] = {
 	{
 		.name = "GC0328",
-		.driver = &g_gc0328_driver,
+		.table = (const uint8_t *)gc0328c_init_reg_tbl,
+		.post_table = (const uint8_t *)gc0328c_post_init_reg_tbl,
+		.table_size = XF16CAM_GC0328_TABLE_SIZE,
+		.post_table_size = XF16CAM_GC0328_POST_TABLE_SIZE,
+		.init_settle_ms = 2000,
 		.address = 0x21,
 		.bank_register = 0xfe,
 		.bank_value = 0x00,
 		.id_register = 0xf0,
 		.id_value = 0x9d,
+		.power_cycle = 1,
+		.delay_register = { 0xfe, 0xfc },
+		.delay_value = { 0x80, 0x16 },
+		.delay_ms = { 10, 1 },
 		.input_width = 320,
 		.input_height = 240,
 		.output_width = 320,
@@ -136,6 +142,14 @@ static HAL_Status xf16cam_sccb_init(I2C_ID bus)
 	return status;
 }
 
+static void xf16cam_sensor_power_cycle(const SENSOR_ConfigParam *cfg)
+{
+	HAL_GPIO_WritePin(cfg->pwcfg.Pwdn_Port, cfg->pwcfg.Pwdn_Pin, GPIO_PIN_LOW);
+	OS_MSleep(10);
+	HAL_GPIO_WritePin(cfg->pwcfg.Pwdn_Port, cfg->pwcfg.Pwdn_Pin, GPIO_PIN_HIGH);
+	OS_MSleep(10);
+}
+
 static int xf16cam_sensor_probe(I2C_ID bus, const XF16CamSensor *sensor,
 				uint8_t *chip_id)
 {
@@ -152,22 +166,16 @@ static int xf16cam_sensor_probe(I2C_ID bus, const XF16CamSensor *sensor,
 	return value == sensor->id_value;
 }
 
-static HAL_Status xf16cam_sensor_load_table(SENSOR_ConfigParam *cfg)
+static HAL_Status xf16cam_sensor_write_table(I2C_ID bus, const uint8_t *table,
+					     uint16_t size)
 {
-	uint16_t size;
 	uint16_t offset;
-	I2C_ID bus = (I2C_ID)cfg->i2c_id;
-
-	if (!g_selected || !g_selected->table || !g_selected->table_size)
-		return HAL_ERROR;
-	size = g_selected->table_size;
-	if (xf16cam_sccb_init(bus) != HAL_OK)
-		return HAL_ERROR;
 
 	for (offset = 0; offset + 1 < size; offset += 2) {
-		uint8_t reg = g_selected->table[offset];
-		uint8_t value = g_selected->table[offset + 1];
+		uint8_t reg = table[offset];
+		uint8_t value = table[offset + 1];
 		int attempt;
+		int delay;
 
 		if (reg == 0xff && value == 0xff)
 			return HAL_OK;
@@ -175,26 +183,61 @@ static HAL_Status xf16cam_sensor_load_table(SENSOR_ConfigParam *cfg)
 			OS_MSleep(value == 0xfe ? 100 : 1000);
 			continue;
 		}
-		for (attempt = 0; attempt < 3; ++attempt) {
+		for (attempt = 0; attempt < XF16CAM_SENSOR_WRITE_ATTEMPTS; ++attempt) {
 			uint8_t data = value;
 			if (HAL_I2C_SCCB_Master_Transmit_IT(bus, g_selected->address,
 			                                  reg, &data) == 1)
 				break;
 			OS_MSleep(2);
 		}
-		if (attempt == 3) {
+		if (attempt == XF16CAM_SENSOR_WRITE_ATTEMPTS) {
 			printf("xf16cam camera: %s table write failed at %u\n",
 			       g_selected->name, (unsigned int)(offset / 2));
-			HAL_I2C_DeInit(bus);
 			return HAL_ERROR;
+		}
+		for (delay = 0; delay < 2; ++delay) {
+			if (g_selected->delay_ms[delay] &&
+			    reg == g_selected->delay_register[delay] &&
+			    value == g_selected->delay_value[delay])
+				OS_MSleep(g_selected->delay_ms[delay]);
 		}
 		if (offset == 0)
 			OS_MSleep(1);
 	}
+	return HAL_OK;
+}
 
-	printf("xf16cam camera: %s table has no terminator\n", g_selected->name);
-	HAL_I2C_DeInit(bus);
-	return HAL_ERROR;
+static HAL_Status xf16cam_sensor_load_table(SENSOR_ConfigParam *cfg)
+{
+	I2C_ID bus = (I2C_ID)cfg->i2c_id;
+	uint8_t chip_id;
+
+	if (!g_selected || !g_selected->table || !g_selected->table_size)
+		return HAL_ERROR;
+	if (g_selected->power_cycle)
+		xf16cam_sensor_power_cycle(cfg);
+	if (xf16cam_sccb_init(bus) != HAL_OK)
+		return HAL_ERROR;
+	if (g_selected->power_cycle &&
+	    !xf16cam_sensor_probe(bus, g_selected, &chip_id)) {
+		printf("xf16cam camera: %s did not return after power cycle\n",
+		       g_selected->name);
+		HAL_I2C_DeInit(bus);
+		return HAL_ERROR;
+	}
+	if (xf16cam_sensor_write_table(bus, g_selected->table,
+	                                g_selected->table_size) != HAL_OK ||
+	    (g_selected->post_table &&
+	     xf16cam_sensor_write_table(bus, g_selected->post_table,
+	                                 g_selected->post_table_size) != HAL_OK)) {
+		HAL_I2C_DeInit(bus);
+		return HAL_ERROR;
+	}
+	if (g_selected->init_settle_ms)
+		OS_MSleep(g_selected->init_settle_ms);
+
+	printf("xf16cam camera: %s init complete\n", g_selected->name);
+	return HAL_OK;
 }
 
 HAL_Status xf16cam_sensor_init(SENSOR_ConfigParam *cfg)
@@ -220,8 +263,6 @@ HAL_Status xf16cam_sensor_init(SENSOR_ConfigParam *cfg)
 				HAL_I2C_DeInit(bus);
 				printf("xf16cam camera: %s detected (id=0x%02x)\n",
 				       g_selected->name, chip_id);
-				if (g_selected->driver && g_selected->driver->init)
-					return g_selected->driver->init(cfg);
 				return xf16cam_sensor_load_table(cfg);
 			}
 		}
@@ -234,18 +275,14 @@ HAL_Status xf16cam_sensor_init(SENSOR_ConfigParam *cfg)
 
 void xf16cam_sensor_deinit(SENSOR_ConfigParam *cfg)
 {
-	if (g_selected && g_selected->driver && g_selected->driver->deinit)
-		g_selected->driver->deinit(cfg);
-	else if (cfg)
+	if (cfg) {
+		HAL_GPIO_WritePin(cfg->pwcfg.Pwdn_Port, cfg->pwcfg.Pwdn_Pin,
+		                  GPIO_PIN_HIGH);
+		OS_MSleep(3);
+		HAL_GPIO_DeInit(cfg->pwcfg.Pwdn_Port, cfg->pwcfg.Pwdn_Pin);
 		HAL_I2C_DeInit((I2C_ID)cfg->i2c_id);
+	}
 	g_selected = NULL;
-}
-
-HAL_Status xf16cam_sensor_ioctl(SENSOR_IoctrlCmd attr, uint32_t arg)
-{
-	if (g_selected && g_selected->driver && g_selected->driver->ioctl)
-		return g_selected->driver->ioctl(attr, arg);
-	return HAL_ERROR;
 }
 
 int xf16cam_sensor_configure_camera(uint16_t configured_width,

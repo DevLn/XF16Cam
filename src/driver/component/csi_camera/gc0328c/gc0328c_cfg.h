@@ -30,6 +30,8 @@
 #ifndef __GC0328C_CFG_H__
 #define __GC0328C_CFG_H__
 
+#include "compiler.h"
+
 /*
  * XF16 factory-derived GC0328C tables mined directly from
  * A9_Mini_Spy_Cam_Neo_SPI_C74014_T25S80-divadiow.bin.
@@ -46,7 +48,7 @@
  * from the XF16 dump in the earlier investigation.
  */
 
-const uint8_t gc0328c_init_reg_tbl[][2] = {
+__xip_rodata const uint8_t gc0328c_init_reg_tbl[][2] = {
 	{0xfe, 0x80},
 	{0xfe, 0x80},
 	{0xfc, 0x16},
@@ -423,7 +425,7 @@ const uint8_t gc0328c_init_reg_tbl[][2] = {
 	{0xf2, 0x01},
 };
 
-const uint8_t gc0328c_post_init_reg_tbl[][2] = {
+__xip_rodata const uint8_t gc0328c_post_init_reg_tbl[][2] = {
 	{0xfe, 0x00},
 	{0x59, 0x22},
 	{0xfe, 0x00},
