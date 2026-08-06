@@ -12,7 +12,10 @@ single-client RTSP stream without PSRAM or an SD card.
 - Serial recovery: `wifi ap` or `wifi sta <ssid> <password>` saves the same
   configuration as the web page and reboots without exposing the password.
 - Stream: `rtsp://<device-ip>:8554/stream`
-- The web page can switch exclusively between RTSP and an embedded MJPEG view.
+- The responsive web console has Live, Network, Storage, and System tabs, with
+  a focal embedded MJPEG view that can switch exclusively with RTSP mode.
+- Browser MJPEG frames are terminated as standalone JPEG images; this avoids
+  decoder resynchronization flicker while leaving the RTP/JPEG path unchanged.
 - Device information reports the detected flash ID/capacity and known XF16 pin map.
 - PA15 short-press switches Web/RTSP mode; PA20 held for three seconds restores
   the setup AP. PA21 blinks during startup and stays on when services are ready.

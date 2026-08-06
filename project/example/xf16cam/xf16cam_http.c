@@ -4,6 +4,7 @@
 #include <string.h>
 #include <strings.h>
 
+#include "compiler.h"
 #include "kernel/os/os.h"
 #include "driver/chip/hal_flash.h"
 #include "driver/chip/hal_prcm.h"
@@ -73,15 +74,28 @@ static void xf16cam_http_flash_info(uint32_t *jedec, uint32_t *size)
 		*size = 1UL << capacity;
 }
 
-static const char g_page_head[] =
+__xip_rodata static const char g_page_head[] =
 	"<!doctype html><html><head><meta charset=utf-8>"
 	"<meta name=viewport content='width=device-width,initial-scale=1'>"
 	"<title>XF16Cam</title><style>"
-	"body{font:15px system-ui;margin:auto;max-width:680px;padding:18px;background:#eef2f5;color:#18212b}"
-	"section{background:white;padding:16px;margin:12px 0;border-radius:10px;box-shadow:0 1px 4px #0002}"
-	"h1,h2{margin:.2em 0}.grid{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px}"
-	"input,button{font:inherit;padding:9px;margin:5px 0;box-sizing:border-box}input{width:100%}"
-	"button{cursor:pointer}small{color:#586675}.ok{color:#176b34}</style></head><body>";
+	":root{color-scheme:light;--ink:#18212b;--muted:#647281;--line:#dbe2e8;--brand:#176b5b;--bg:#edf2f4}"
+	"*{box-sizing:border-box}body{font:15px system-ui;margin:0;background:var(--bg);color:var(--ink)}"
+	"header,main{width:min(1040px,calc(100% - 28px));margin:auto}header{display:flex;align-items:center;"
+	"justify-content:space-between;padding:18px 0 12px}h1{font-size:1.45rem;margin:0}h2{font-size:1.05rem;margin:0 0 14px}"
+	"p{line-height:1.45}.meta{color:var(--muted);font-size:.85rem}.pill{display:inline-block;padding:5px 9px;"
+	"border-radius:999px;background:#dcece8;color:#125648;font-weight:650}.viewer,.card{background:#fff;border:1px solid var(--line);"
+	"border-radius:12px;box-shadow:0 2px 8px #18212b12}.viewer{padding:14px;margin-bottom:14px}.viewerTop{display:flex;"
+	"justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}.screen{display:grid;place-items:center;"
+	"min-height:240px;background:#111820;border-radius:8px;overflow:hidden;color:#aeb9c2}.screen img{display:block;width:100%;"
+	"max-width:720px;aspect-ratio:4/3;object-fit:contain}.tabs{display:flex;gap:5px;overflow:auto;padding:5px;background:#dfe6ea;"
+	"border-radius:10px;margin:0 0 14px;position:sticky;top:0;z-index:2}.tabs button{flex:1;min-width:max-content;border:0;"
+	"background:transparent}.tabs button.on{background:#fff;color:var(--brand);box-shadow:0 1px 4px #0002}.panel{display:none}.panel.on{display:grid;"
+	"grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.card{padding:16px}.wide{grid-column:1/-1}.grid{display:grid;"
+	"grid-template-columns:max-content 1fr;gap:7px 14px}.grid b{color:#43515e}form{margin:8px 0}label{display:block;margin:8px 0}"
+	"input,button{font:inherit;padding:9px 11px;margin:4px 0;border:1px solid #b9c5cd;border-radius:7px}input{width:100%;background:#fff}"
+	"button{cursor:pointer;background:#f7f9fa}button.primary{background:var(--brand);border-color:var(--brand);color:#fff}"
+	"small{color:var(--muted)}a{color:#096b99}@media(max-width:680px){header{align-items:flex-start}.panel.on{grid-template-columns:1fr}"
+	".wide{grid-column:auto}.screen{min-height:180px}.grid{grid-template-columns:1fr}.grid b{margin-top:5px}}</style></head><body>";
 
 static int xf16cam_http_send_all(int fd, const void *data, size_t length)
 {
@@ -101,6 +115,14 @@ static void xf16cam_http_send_text(int fd, const char *text)
 {
 	xf16cam_http_send_all(fd, text, strlen(text));
 }
+
+#define XF16CAM_HTTP_JOIN_(a, b) a##b
+#define XF16CAM_HTTP_JOIN(a, b) XF16CAM_HTTP_JOIN_(a, b)
+#define XF16CAM_HTTP_SEND_LITERAL(fd, literal) do { \
+	__xip_rodata static const char XF16CAM_HTTP_JOIN(g_http_text_, __LINE__)[] = literal; \
+	xf16cam_http_send_all((fd), XF16CAM_HTTP_JOIN(g_http_text_, __LINE__), \
+	                      sizeof(XF16CAM_HTTP_JOIN(g_http_text_, __LINE__)) - 1); \
+} while (0)
 
 static void xf16cam_http_begin(int fd, const char *status, const char *type)
 {
@@ -165,46 +187,23 @@ static void xf16cam_http_page(int fd)
 	xf16cam_http_begin(fd, "200 OK", "text/html; charset=utf-8");
 	xf16cam_http_send_text(fd, g_page_head);
 	length = snprintf(dynamic, sizeof(dynamic),
-	                  "<h1>XF16Cam</h1><p class=ok>Firmware %s</p>"
-	                  "<section><h2>Device</h2><div class=grid>"
-	                  "<b>Network mode</b><span>%s</span><b>IP address</b><span>%s</span>"
-	                  "<b>Free SRAM</b><span>%lu bytes</span><b>Camera</b><span>%s, %ux%u JPEG</span>"
-	                  "<b>Flash JEDEC ID</b><span>%06lx</span><b>Flash capacity</b><span>%lu KiB</span>"
-	                  "<b>Microphone</b><span>%s; peak <span id=mic>%u</span>/32768</span>"
-	                  "<b>Mode button</b><span>PA15 (%s)</span>"
-	                  "<b>Setup button</b><span>PA20 (%s)</span></div></section>",
+	                  "<header><div><h1>XF16Cam</h1><div class=meta>Firmware %s</div></div>"
+	                  "<div><span class=pill>%s</span> <span class=meta>%s</span></div></header><main>"
+	                  "<section class=viewer><div class=viewerTop><div><b>Live camera</b>"
+	                  "<div class=meta>%s &middot; %ux%u JPEG</div></div><span class=pill>%s</span></div>"
+	                  "<div class=screen>",
 	                  XF16CAM_VERSION,
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Setup AP",
-	                  xf16cam_net_ip(), (unsigned long)xf16cam_http_heap_headroom(),
-	                  xf16cam_sensor_name(), (unsigned int)xf16cam_sensor_width(),
+	                  xf16cam_net_ip(), xf16cam_sensor_name(),
+	                  (unsigned int)xf16cam_sensor_width(),
 	                  (unsigned int)xf16cam_sensor_height(),
-	                  (unsigned long)(flash_jedec & 0xffffff), (unsigned long)(flash_size / 1024),
-	                  audio->active ? "AMIC active, PCMU/8000" : "AMIC unavailable", audio->peak,
-	                  xf16cam_board_mode_button_pressed() ? "pressed" : "released",
-	                  xf16cam_board_reset_button_pressed() ? "pressed" : "released");
+	                  config->media_mode == XF16CAM_MEDIA_WEB ? "Browser MJPEG" : "RTSP");
 	xf16cam_http_send_all(fd, dynamic, length);
-	xf16cam_http_send_text(fd,
-	                  "<script>setInterval(async()=>{try{let a=await(await fetch('/api/audio')).json();"
-	                  "let m=document.querySelector('#mic');if(m)m.textContent=a.peak}catch(e){}},1000)</script>"
-	                  "<section><h2>Wi-Fi setup</h2><p>Choose a nearby network or type its SSID.</p>"
-	                  "<form method=post action=/api/wifi><label>SSID"
-	                  "<input name=ssid list=networks maxlength=32 required value=\"");
-	xf16cam_http_send_escaped(fd, (const uint8_t *)config->ssid, strlen(config->ssid), 0);
-	xf16cam_http_send_text(fd,
-	                  "\"></label><datalist id=networks></datalist>"
-	                  "<label>Password<input type=password name=password maxlength=63 autocomplete=new-password></label>"
-	                  "<button type=submit>Save and reboot</button></form>"
-	                  "<button type=button onclick=scan()>Refresh nearby networks</button> <span id=scan></span>"
-	                  "<form method=post action=/api/ap><button type=submit>Return to setup AP</button></form></section>");
-	xf16cam_http_send_text(fd, "<section><h2>Camera stream</h2><p>Active mode: <b>");
-	xf16cam_http_send_text(fd, config->media_mode == XF16CAM_MEDIA_WEB ? "Browser MJPEG" : "RTSP");
-	xf16cam_http_send_text(fd, "</b></p>");
 	if (config->media_mode == XF16CAM_MEDIA_WEB) {
-		xf16cam_http_send_text(fd,
-		                  "<img id=video src=/stream.mjpeg alt='Live camera' "
-		                  "style='width:320px;max-width:100%;height:auto;background:#111'>"
-		                  "<p><button type=button id=listen onclick=toggleAudio()>Listen</button> "
-		                  "<span id=audioState>Audio stopped</span></p>"
+		XF16CAM_HTTP_SEND_LITERAL(fd,
+		                  "<img id=video src=/stream.mjpeg alt='Live camera'></div>"
+		                  "<div><button type=button id=listen onclick=toggleAudio()>Listen</button> "
+		                  "<span id=audioState>Audio stopped</span></div>"
 		                  "<script>let ac,reader,next=0;function ulaw(v){let u=(~v)&255,t=((u&15)<<3)+132;"
 		                  "t<<=(u&112)>>4;return((u&128)?132-t:t-132)/32768}async function toggleAudio(){"
 		                  "let b=document.querySelector('#listen'),s=document.querySelector('#audioState');"
@@ -217,17 +216,45 @@ static void xf16cam_http_page(int fd)
 		                  "if(ac)await ac.close();ac=reader=null;b.textContent='Listen'}}</script>");
 	} else {
 		length = snprintf(dynamic, sizeof(dynamic),
-		                  "<p><a href='rtsp://%s:8554/stream'>rtsp://%s:8554/stream</a></p>",
+		                  "<div><a href='rtsp://%s:8554/stream'>rtsp://%s:8554/stream</a></div></div>",
 		                  xf16cam_net_ip(), xf16cam_net_ip());
 		xf16cam_http_send_all(fd, dynamic, length);
 	}
-	xf16cam_http_send_text(fd,
+	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<form method=post action=/api/media>"
 	                  "<button name=mode value=web onclick=\"let v=document.querySelector('#video');if(v)v.src=''\">Browser video</button> "
 	                  "<button name=mode value=rtsp onclick=\"let v=document.querySelector('#video');if(v)v.src=''\">RTSP</button></form>"
-	                  "<small>Only one mode is initialized at a time; changing it reboots the camera.</small></section>");
-	xf16cam_http_send_text(fd,
-	                  "<section><h2>SD card</h2><div class=grid><b>Status</b><span>");
+	                  "<small>Only one mode is initialized at a time; changing it reboots the camera.</small></section>"
+	                  "<nav class=tabs><button data-tab=live onclick=tab('live')>Live</button>"
+	                  "<button data-tab=network onclick=tab('network')>Network</button>"
+	                  "<button data-tab=storage onclick=tab('storage')>Storage</button>"
+	                  "<button data-tab=system onclick=tab('system')>System</button></nav>"
+	                  "<div id=live class=panel><section class=card><h2>Camera</h2><div class=grid>"
+	                  "<b>Sensor</b><span>");
+	xf16cam_http_send_text(fd, xf16cam_sensor_name());
+	length = snprintf(dynamic, sizeof(dynamic),
+	                  "</span><b>JPEG output</b><span>%ux%u</span><b>Stream mode</b><span>%s</span></div></section>"
+	                  "<section class=card><h2>Audio</h2><div class=grid><b>Microphone</b><span>%s</span>"
+	                  "<b>Peak level</b><span><span id=mic>%u</span>/32768</span></div></section></div>",
+	                  (unsigned int)xf16cam_sensor_width(), (unsigned int)xf16cam_sensor_height(),
+	                  config->media_mode == XF16CAM_MEDIA_WEB ? "Browser MJPEG" : "RTSP",
+	                  audio->active ? "AMIC active, PCMU/8000" : "AMIC unavailable", audio->peak);
+	xf16cam_http_send_all(fd, dynamic, length);
+
+	XF16CAM_HTTP_SEND_LITERAL(fd,
+	                  "<div id=network class=panel><section class='card wide'><h2>Wi-Fi setup</h2>"
+	                  "<p>Choose a nearby network or type its SSID.</p>"
+	                  "<form method=post action=/api/wifi><label>SSID"
+	                  "<input name=ssid list=networks maxlength=32 required value=\"");
+	xf16cam_http_send_escaped(fd, (const uint8_t *)config->ssid, strlen(config->ssid), 0);
+	XF16CAM_HTTP_SEND_LITERAL(fd,
+	                  "\"></label><datalist id=networks></datalist>"
+	                  "<label>Password<input type=password name=password maxlength=63 autocomplete=new-password></label>"
+	                  "<button class=primary type=submit>Save and reboot</button></form>"
+	                  "<button type=button onclick=scan()>Scan nearby networks</button> <span id=scan></span>"
+	                  "<form method=post action=/api/ap><button type=submit>Return to setup AP</button></form></section></div>"
+	                  "<div id=storage class=panel><section class='card wide'><h2>SD card</h2><div class=grid>"
+	                  "<b>Status</b><span>");
 	if (storage->mounted) {
 		length = snprintf(dynamic, sizeof(dynamic),
 		                  "Mounted</span><b>Capacity</b><span>%lu MiB</span>"
@@ -235,15 +262,27 @@ static void xf16cam_http_page(int fd)
 		                  (unsigned long)storage->total_mb, (unsigned long)storage->free_mb);
 		xf16cam_http_send_all(fd, dynamic, length);
 	} else {
-		xf16cam_http_send_text(fd, "Not mounted</span></div>");
+		XF16CAM_HTTP_SEND_LITERAL(fd, "Not mounted</span></div>");
 	}
-	xf16cam_http_send_text(fd,
+	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<form method=post action=/api/sd/refresh><button type=submit>Check card</button></form>"
 	                  "<form method=post action=/api/sd/format onsubmit=\"return confirm('Erase and format the SD card?')\">"
 	                  "<button type=submit>Format FAT32</button></form>"
-	                  "<small>Formatting permanently erases the card.</small></section>");
-	xf16cam_http_send_text(fd,
-	                  "<section><h2>XF16 pin map</h2><div class=grid>"
+	                  "<small>Formatting permanently erases the card.</small></section></div>"
+	                  "<div id=system class=panel><section class=card><h2>Device</h2><div class=grid>");
+	length = snprintf(dynamic, sizeof(dynamic),
+	                  "<b>Network mode</b><span>%s</span><b>IP address</b><span>%s</span>"
+	                  "<b>Free SRAM</b><span>%lu bytes</span><b>Flash JEDEC ID</b><span>%06lx</span>"
+	                  "<b>Flash capacity</b><span>%lu KiB</span><b>Mode button</b><span>PA15 (%s)</span>"
+	                  "<b>Setup button</b><span>PA20 (%s)</span></div></section>",
+	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Setup AP", xf16cam_net_ip(),
+	                  (unsigned long)xf16cam_http_heap_headroom(), (unsigned long)(flash_jedec & 0xffffff),
+	                  (unsigned long)(flash_size / 1024),
+	                  xf16cam_board_mode_button_pressed() ? "pressed" : "released",
+	                  xf16cam_board_reset_button_pressed() ? "pressed" : "released");
+	xf16cam_http_send_all(fd, dynamic, length);
+	XF16CAM_HTTP_SEND_LITERAL(fd,
+	                  "<section class=card><h2>XF16 pin map</h2><div class=grid>"
 	                  "<b>Camera CSI</b><span>PA0-PA11</span>"
 	                  "<b>Camera control</b><span>PA14</span>"
 	                  "<b>Status LED</b><span>PA21 (factory-confirmed)</span>"
@@ -254,17 +293,21 @@ static void xf16cam_http_page(int fd)
 	                  "<b>Mode button</b><span>PA15; short press switches Web/RTSP</span>"
 	                  "<b>Setup button</b><span>PA20; hold 3 seconds to restore AP</span>"
 	                  "</div></section>");
-	xf16cam_http_send_text(fd,
-	                  "<script>async function scan(){let s=document.querySelector('#scan');s.textContent='Scanning...';"
+	XF16CAM_HTTP_SEND_LITERAL(fd,
+	                  "<section class='card wide'><h2>Firmware update</h2><p>Select an XF16Cam OTA image. Keep power connected until it restarts.</p>"
+	                  "<input id=ota type=file accept=.img><button class=primary type=button onclick=update()>Install update</button> <span id=up></span></section></div>"
+	                  "<script>function tab(id){document.querySelectorAll('.panel').forEach(e=>e.classList.toggle('on',e.id==id));"
+	                  "document.querySelectorAll('.tabs button').forEach(e=>e.classList.toggle('on',e.dataset.tab==id))}"
+	                  "async function scan(){let s=document.querySelector('#scan');s.textContent='Scanning...';"
 	                  "try{let a=await(await fetch('/api/scan')).json(),d=document.querySelector('#networks');d.innerHTML='';"
 	                  "a.forEach(n=>{let o=document.createElement('option');o.value=n.ssid;o.label=n.rssi+' dBm'+(n.secure?' secured':' open');d.append(o)});"
-	                  "s.textContent=a.length+' found'}catch(e){s.textContent='Scan failed'}}scan()</script>"
-	                  "<section><h2>Firmware update</h2><p>Select an XF16Cam OTA image. Keep power connected until it restarts.</p>"
-	                  "<input id=ota type=file accept=.img><button type=button onclick=update()>Install update</button> <span id=up></span></section>"
-	                  "<script>async function update(){let f=document.querySelector('#ota').files[0],s=document.querySelector('#up');"
+	                  "s.textContent=a.length+' found'}catch(e){s.textContent='Scan failed'}}"
+	                  "async function update(){let f=document.querySelector('#ota').files[0],s=document.querySelector('#up');"
 	                  "if(!f){s.textContent='Choose a file';return}if(!confirm('Install '+f.name+' and reboot?'))return;"
 	                  "s.textContent='Uploading...';try{let r=await fetch('/api/ota',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});"
-	                  "s.textContent=await r.text()}catch(e){s.textContent='Connection closed; check whether the camera restarted'}}</script></body></html>");
+	                  "s.textContent=await r.text()}catch(e){s.textContent='Connection closed; check whether the camera restarted'}}"
+	                  "setInterval(async()=>{try{let a=await(await fetch('/api/audio')).json(),m=document.querySelector('#mic');"
+	                  "if(m)m.textContent=a.peak}catch(e){}},1000);tab('live')</script></main></body></html>");
 }
 
 static void xf16cam_http_audio_json(int fd)

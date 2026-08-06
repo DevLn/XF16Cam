@@ -310,7 +310,8 @@ static int xf16cam_mjpeg_stream(int fd)
 {
 	static const char response[] =
 		"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=xf16frame\r\n"
-		"Cache-Control: no-store\r\nConnection: close\r\n\r\n";
+		"Cache-Control: no-store, no-transform\r\nPragma: no-cache\r\nConnection: close\r\n\r\n";
+	static const uint8_t eoi[] = { 0xff, 0xd9 };
 	char part[112];
 
 	if (xf16cam_send_all(fd, response, sizeof(response) - 1) != 0 ||
@@ -333,10 +334,11 @@ static int xf16cam_mjpeg_stream(int fd)
 			continue;
 		length = snprintf(part, sizeof(part),
 		                  "--xf16frame\r\nContent-Type: image/jpeg\r\nContent-Length: %lu\r\n\r\n",
-		                  (unsigned long)jpeg_len);
+		                  (unsigned long)(jpeg_len + sizeof(eoi)));
 		if (length <= 0 || length >= (int)sizeof(part) ||
 		    xf16cam_send_all(fd, part, length) != 0 ||
 		    xf16cam_send_all(fd, jpeg, jpeg_len) != 0 ||
+		    xf16cam_send_all(fd, eoi, sizeof(eoi)) != 0 ||
 		    xf16cam_send_all(fd, "\r\n", 2) != 0)
 			break;
 	}
