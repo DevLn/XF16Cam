@@ -13,6 +13,7 @@
 #include "ota/ota.h"
 
 #include "xf16cam_config.h"
+#include "xf16cam_audio.h"
 #include "xf16cam_board.h"
 #include "xf16cam_http.h"
 #include "xf16cam_media.h"
@@ -151,10 +152,11 @@ static void xf16cam_http_send_escaped(int fd, const uint8_t *text, size_t length
 static void xf16cam_http_page(int fd)
 {
 	const XF16CamConfig *config = xf16cam_config_get();
+	const XF16CamAudioInfo *audio = xf16cam_audio_info();
 	const XF16CamStorageInfo *storage = xf16cam_storage_info();
 	uint32_t flash_jedec;
 	uint32_t flash_size;
-	char dynamic[512];
+	char dynamic[640];
 	int length;
 
 	xf16cam_http_flash_info(&flash_jedec, &flash_size);
@@ -167,17 +169,20 @@ static void xf16cam_http_page(int fd)
 	                  "<b>Network mode</b><span>%s</span><b>IP address</b><span>%s</span>"
 	                  "<b>Free SRAM</b><span>%lu bytes</span><b>Camera</b><span>GC0328, 320x240 JPEG</span>"
 	                  "<b>Flash JEDEC ID</b><span>%06lx</span><b>Flash capacity</b><span>%lu KiB</span>"
-	                  "<b>Microphone</b><span>Internal codec AMIC</span>"
+	                  "<b>Microphone</b><span>%s; peak <span id=mic>%u</span>/32768</span>"
 	                  "<b>Mode button</b><span>PA15 (%s)</span>"
 	                  "<b>Setup button</b><span>PA20 (%s)</span></div></section>",
 	                  XF16CAM_VERSION,
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Setup AP",
 	                  xf16cam_net_ip(), (unsigned long)xf16cam_http_heap_headroom(),
 	                  (unsigned long)(flash_jedec & 0xffffff), (unsigned long)(flash_size / 1024),
+	                  audio->active ? "AMIC active, PCMU/8000" : "AMIC unavailable", audio->peak,
 	                  xf16cam_board_mode_button_pressed() ? "pressed" : "released",
 	                  xf16cam_board_reset_button_pressed() ? "pressed" : "released");
 	xf16cam_http_send_all(fd, dynamic, length);
 	xf16cam_http_send_text(fd,
+	                  "<script>setInterval(async()=>{try{let a=await(await fetch('/api/audio')).json();"
+	                  "let m=document.querySelector('#mic');if(m)m.textContent=a.peak}catch(e){}},1000)</script>"
 	                  "<section><h2>Wi-Fi setup</h2><p>Choose a nearby network or type its SSID.</p>"
 	                  "<form method=post action=/api/wifi><label>SSID"
 	                  "<input name=ssid list=networks maxlength=32 required value=\"");
@@ -245,6 +250,19 @@ static void xf16cam_http_page(int fd)
 	                  "if(!f){s.textContent='Choose a file';return}if(!confirm('Install '+f.name+' and reboot?'))return;"
 	                  "s.textContent='Uploading...';try{let r=await fetch('/api/ota',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});"
 	                  "s.textContent=await r.text()}catch(e){s.textContent='Connection closed; check whether the camera restarted'}}</script></body></html>");
+}
+
+static void xf16cam_http_audio_json(int fd)
+{
+	const XF16CamAudioInfo *audio = xf16cam_audio_info();
+	char body[128];
+	int length = snprintf(body, sizeof(body),
+	                      "{\"active\":%s,\"peak\":%u,\"mean\":%u,\"packets\":%lu,\"read_errors\":%lu}",
+	                      audio->active ? "true" : "false", audio->peak, audio->mean,
+	                      (unsigned long)audio->packets, (unsigned long)audio->read_errors);
+
+	xf16cam_http_begin_length(fd, "200 OK", "application/json", length);
+	xf16cam_http_send_all(fd, body, length);
 }
 
 static int xf16cam_http_scan(void)
@@ -474,6 +492,8 @@ static int xf16cam_http_handle(int fd)
 			return XF16CAM_HTTP_DETACH_CLIENT;
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/scan") == 0) {
 		xf16cam_http_scan_json(fd);
+	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/audio") == 0) {
+		xf16cam_http_audio_json(fd);
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/wifi") == 0) {
 		if (xf16cam_form_value(body, "ssid", ssid, sizeof(ssid)) != 0 ||
 		    xf16cam_form_value(body, "password", psk, sizeof(psk)) != 0 ||
