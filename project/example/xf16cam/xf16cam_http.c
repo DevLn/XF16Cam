@@ -13,6 +13,7 @@
 #include "ota/ota.h"
 
 #include "xf16cam_config.h"
+#include "xf16cam_board.h"
 #include "xf16cam_http.h"
 #include "xf16cam_media.h"
 #include "xf16cam_net.h"
@@ -164,11 +165,15 @@ static void xf16cam_http_page(int fd)
 	                  "<b>Network mode</b><span>%s</span><b>IP address</b><span>%s</span>"
 	                  "<b>Free SRAM</b><span>%lu bytes</span><b>Camera</b><span>GC0328, 320x240 JPEG</span>"
 	                  "<b>Flash JEDEC ID</b><span>%06lx</span><b>Flash capacity</b><span>%lu KiB</span>"
-	                  "<b>Microphone</b><span>Internal codec AMIC</span></div></section>",
+	                  "<b>Microphone</b><span>Internal codec AMIC</span>"
+	                  "<b>Mode button</b><span>PA15 (%s)</span>"
+	                  "<b>Setup button</b><span>PA20 (%s)</span></div></section>",
 	                  XF16CAM_VERSION,
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Setup AP",
 	                  xf16cam_net_ip(), (unsigned long)xf16cam_http_heap_headroom(),
-	                  (unsigned long)(flash_jedec & 0xffffff), (unsigned long)(flash_size / 1024));
+	                  (unsigned long)(flash_jedec & 0xffffff), (unsigned long)(flash_size / 1024),
+	                  xf16cam_board_mode_button_pressed() ? "pressed" : "released",
+	                  xf16cam_board_reset_button_pressed() ? "pressed" : "released");
 	xf16cam_http_send_all(fd, dynamic, length);
 	xf16cam_http_send_text(fd,
 	                  "<section><h2>Wi-Fi setup</h2><p>Choose a nearby network or type its SSID.</p>"
@@ -208,7 +213,8 @@ static void xf16cam_http_page(int fd)
 	                  "<b>SD card</b><span>PB16 CMD, PB17 D0, PB18 CLK</span>"
 	                  "<b>Console</b><span>PB0 TX, PB1 RX</span>"
 	                  "<b>SPI flash</b><span>PB2-PB7</span>"
-	                  "<b>Buttons</b><span>Identification in progress</span>"
+	                  "<b>Mode button</b><span>PA15; short press switches Web/RTSP</span>"
+	                  "<b>Setup button</b><span>PA20; hold 3 seconds to restore AP</span>"
 	                  "</div></section>");
 	xf16cam_http_send_text(fd,
 	                  "<script>async function scan(){let s=document.querySelector('#scan');s.textContent='Scanning...';"

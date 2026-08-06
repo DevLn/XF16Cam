@@ -21,6 +21,7 @@
 #include "lwip/sockets.h"
 
 #include "xf16cam_config.h"
+#include "xf16cam_board.h"
 #include "xf16cam_http.h"
 #include "xf16cam_media.h"
 #include "xf16cam_net.h"
@@ -785,9 +786,11 @@ int main(void)
 		return -1;
 	}
 	xf16cam_config_init();
+	xf16cam_board_init();
 	if (xf16cam_net_start(xf16cam_config_get()) != 0)
 		return -1;
 	xf16cam_http_start();
+	xf16cam_board_set_ready();
 	if (xf16cam_config_get()->media_mode == XF16CAM_MEDIA_RTSP) {
 		xf16cam_rtsp_server();
 	} else {

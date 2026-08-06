@@ -14,6 +14,8 @@ into a single-client RTSP stream without PSRAM or an SD card.
 - Stream: `rtsp://<device-ip>:8554/stream`
 - The web page can switch exclusively between RTSP and an embedded MJPEG view.
 - Device information reports the detected flash ID/capacity and known XF16 pin map.
+- PA15 short-press switches Web/RTSP mode; PA20 held for three seconds restores
+  the setup AP. PA21 blinks during startup and stays on when services are ready.
 - Transport: RTP/JPEG (RFC 2435) interleaved over RTSP/TCP
 - Image: 320 x 240, JPEG quality 60
 
@@ -28,13 +30,13 @@ reflashing.
 ## Confirmed XF16 hardware
 
 - GC0328 CSI: PA0-PA11; camera control: PA14; camera power rail: PA23
-- Factory status LED: PA21
+- Factory status LED: PA21; mode button: PA15; setup/reset button: PA20
 - Microphone: XR872 internal codec analog microphone (AMIC) input, not a GPIO
 - SD card: PB16 CMD, PB17 D0, PB18 CLK
 - Console: PB0 TX, PB1 RX; SPI flash: PB2-PB7
 
-The two button connections are still being identified and are not driven by
-the firmware.
+The button pins and roles were recovered from the factory application's board
+configuration. Both inputs are active-low and use internal pull-ups.
 
 ## Linux build
 
