@@ -12,6 +12,7 @@ into a single-client RTSP stream without PSRAM or an SD card.
 - Serial recovery: `wifi ap` or `wifi sta <ssid> <password>` saves the same
   configuration as the web page and reboots without exposing the password.
 - Stream: `rtsp://<device-ip>:8554/stream`
+- The web page can switch exclusively between RTSP and an embedded MJPEG view.
 - Transport: RTP/JPEG (RFC 2435) interleaved over RTSP/TCP
 - Image: 320 x 240, JPEG quality 60
 

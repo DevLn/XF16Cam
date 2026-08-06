@@ -2,6 +2,7 @@
  * Copyright (C) 2017 XRADIO TECHNOLOGY CO., LTD.
  */
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -21,6 +22,7 @@
 
 #include "xf16cam_config.h"
 #include "xf16cam_http.h"
+#include "xf16cam_media.h"
 #include "xf16cam_net.h"
 #include "xf16cam_version.h"
 
@@ -72,6 +74,8 @@ static void xf16_factory_pa23_prepare(void);
 static uint8_t *gmemaddr;
 static CAMERA_Mgmt mem_mgmt;
 static const XF16_SensorBackend *g_selected_backend;
+static OS_Thread_t g_mjpeg_thread;
+static volatile int g_mjpeg_active;
 
 static const SENSOR_Func g_gc0328_hooks = {
 	.init = HAL_GC0328C_Init,
@@ -507,6 +511,68 @@ static int xf16cam_send_all(int fd, const void *data, uint32_t len)
 	return 0;
 }
 
+static int xf16cam_mjpeg_stream(int fd)
+{
+	static const char response[] =
+		"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=xf16frame\r\n"
+		"Cache-Control: no-store\r\nConnection: close\r\n\r\n";
+	char part[112];
+
+	if (xf16cam_send_all(fd, response, sizeof(response) - 1) != 0 ||
+	    HAL_CAMERA_CaptureVideoStart() != 0)
+		return -1;
+	printf("xf16cam WEB PLAY: multipart MJPEG\n");
+	while (1) {
+		CAMERA_JpegBuffInfo info;
+		uint8_t *jpeg;
+		uint32_t jpeg_len;
+		int length;
+
+		if (HAL_CAMERA_CaptureVideoData(&info) != 0)
+			break;
+		if (info.buff_index >= JPEG_BUFFER_COUNT)
+			continue;
+		jpeg = mem_mgmt.jpeg_buf[info.buff_index].addr - CAMERA_JPEG_HEADER_LEN;
+		jpeg_len = info.size + CAMERA_JPEG_HEADER_LEN;
+		if (jpeg_len > JPEG_BUFF_SIZE + CAMERA_JPEG_HEADER_LEN)
+			continue;
+		length = snprintf(part, sizeof(part),
+		                  "--xf16frame\r\nContent-Type: image/jpeg\r\nContent-Length: %lu\r\n\r\n",
+		                  (unsigned long)jpeg_len);
+		if (length <= 0 || length >= (int)sizeof(part) ||
+		    xf16cam_send_all(fd, part, length) != 0 ||
+		    xf16cam_send_all(fd, jpeg, jpeg_len) != 0 ||
+		    xf16cam_send_all(fd, "\r\n", 2) != 0)
+			break;
+	}
+	HAL_CAMERA_CaptureVideoStop();
+	printf("xf16cam WEB client stopped\n");
+	return 0;
+}
+
+static void xf16cam_mjpeg_task(void *arg)
+{
+	int fd = (int)(intptr_t)arg;
+
+	xf16cam_mjpeg_stream(fd);
+	closesocket(fd);
+	g_mjpeg_active = 0;
+	OS_ThreadDelete(&g_mjpeg_thread);
+}
+
+int xf16cam_mjpeg_start(int fd)
+{
+	if (g_mjpeg_active)
+		return -1;
+	g_mjpeg_active = 1;
+	if (OS_ThreadCreate(&g_mjpeg_thread, "xf16cam-mjpeg", xf16cam_mjpeg_task,
+	                    (void *)(intptr_t)fd, OS_THREAD_PRIO_APP, 2 * 1024) != OS_OK) {
+		g_mjpeg_active = 0;
+		return -1;
+	}
+	return 0;
+}
+
 static int xf16cam_send_rtp_jpeg(int fd, const XF16CamJpeg *jpg,
 				 uint16_t *sequence, uint32_t timestamp)
 {
@@ -722,7 +788,13 @@ int main(void)
 	if (xf16cam_net_start(xf16cam_config_get()) != 0)
 		return -1;
 	xf16cam_http_start();
-	xf16cam_rtsp_server();
+	if (xf16cam_config_get()->media_mode == XF16CAM_MEDIA_RTSP) {
+		xf16cam_rtsp_server();
+	} else {
+		printf("xf16cam browser video ready: http://%s/stream.mjpeg\n", xf16cam_net_ip());
+		while (1)
+			OS_MSleep(10000);
+	}
 	camera_deinit();
 	return -1;
 }

@@ -13,6 +13,7 @@
 
 #include "xf16cam_config.h"
 #include "xf16cam_http.h"
+#include "xf16cam_media.h"
 #include "xf16cam_net.h"
 #include "xf16cam_version.h"
 
@@ -27,6 +28,7 @@ enum {
 	XF16CAM_HTTP_KEEP_RUNNING = 0,
 	XF16CAM_HTTP_COLD_REBOOT,
 	XF16CAM_HTTP_OTA_REBOOT,
+	XF16CAM_HTTP_DETACH_CLIENT,
 };
 
 static OS_Thread_t g_http_thread;
@@ -81,6 +83,17 @@ static void xf16cam_http_begin(int fd, const char *status, const char *type)
 	                      "HTTP/1.1 %s\r\nContent-Type: %s\r\n"
 	                      "Cache-Control: no-store\r\nConnection: close\r\n\r\n",
 	                      status, type);
+	xf16cam_http_send_all(fd, header, length);
+}
+
+static void xf16cam_http_begin_length(int fd, const char *status, const char *type,
+	                                  size_t body_length)
+{
+	char header[224];
+	int length = snprintf(header, sizeof(header),
+	                      "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %lu\r\n"
+	                      "Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+	                      status, type, (unsigned long)body_length);
 	xf16cam_http_send_all(fd, header, length);
 }
 
@@ -139,12 +152,24 @@ static void xf16cam_http_page(int fd)
 	                  "<button type=submit>Save and reboot</button></form>"
 	                  "<button type=button onclick=scan()>Refresh nearby networks</button> <span id=scan></span>"
 	                  "<form method=post action=/api/ap><button type=submit>Return to setup AP</button></form></section>");
-	length = snprintf(dynamic, sizeof(dynamic),
-	                  "<section><h2>Camera stream</h2><p>RTSP is currently enabled at "
-	                  "<a href='rtsp://%s:8554/stream'>rtsp://%s:8554/stream</a>.</p>"
-	                  "<small>Browser video and the exclusive Web/RTSP selector arrive in the media milestone.</small></section>",
-	                  xf16cam_net_ip(), xf16cam_net_ip());
-	xf16cam_http_send_all(fd, dynamic, length);
+	xf16cam_http_send_text(fd, "<section><h2>Camera stream</h2><p>Active mode: <b>");
+	xf16cam_http_send_text(fd, config->media_mode == XF16CAM_MEDIA_WEB ? "Browser MJPEG" : "RTSP");
+	xf16cam_http_send_text(fd, "</b></p>");
+	if (config->media_mode == XF16CAM_MEDIA_WEB) {
+		xf16cam_http_send_text(fd,
+		                  "<img id=video src=/stream.mjpeg alt='Live camera' "
+		                  "style='width:320px;max-width:100%;height:auto;background:#111'>");
+	} else {
+		length = snprintf(dynamic, sizeof(dynamic),
+		                  "<p><a href='rtsp://%s:8554/stream'>rtsp://%s:8554/stream</a></p>",
+		                  xf16cam_net_ip(), xf16cam_net_ip());
+		xf16cam_http_send_all(fd, dynamic, length);
+	}
+	xf16cam_http_send_text(fd,
+	                  "<form method=post action=/api/media>"
+	                  "<button name=mode value=web onclick=\"let v=document.querySelector('#video');if(v)v.src=''\">Browser video</button> "
+	                  "<button name=mode value=rtsp onclick=\"let v=document.querySelector('#video');if(v)v.src=''\">RTSP</button></form>"
+	                  "<small>Only one mode is initialized at a time; changing it reboots the camera.</small></section>");
 	xf16cam_http_send_text(fd,
 	                  "<script>async function scan(){let s=document.querySelector('#scan');s.textContent='Scanning...';"
 	                  "try{let a=await(await fetch('/api/scan')).json(),d=document.querySelector('#networks');d.innerHTML='';"
@@ -254,11 +279,15 @@ static int xf16cam_form_value(const char *body, const char *key,
 
 static void xf16cam_http_message(int fd, const char *status, const char *message)
 {
-	xf16cam_http_begin(fd, status, "text/html; charset=utf-8");
-	xf16cam_http_send_text(fd, g_page_head);
-	xf16cam_http_send_text(fd, "<section><h1>XF16Cam</h1><p>");
+	static const char prefix[] = "<section><h1>XF16Cam</h1><p>";
+	static const char suffix[] = "</p><a href='/'>Return</a></section></body></html>";
+	size_t length = sizeof(g_page_head) - 1 + sizeof(prefix) - 1 + strlen(message) + sizeof(suffix) - 1;
+
+	xf16cam_http_begin_length(fd, status, "text/html; charset=utf-8", length);
+	xf16cam_http_send_all(fd, g_page_head, sizeof(g_page_head) - 1);
+	xf16cam_http_send_all(fd, prefix, sizeof(prefix) - 1);
 	xf16cam_http_send_text(fd, message);
-	xf16cam_http_send_text(fd, "</p><a href='/'>Return</a></section></body></html>");
+	xf16cam_http_send_all(fd, suffix, sizeof(suffix) - 1);
 }
 
 static char *xf16cam_http_header(char *request, char *header_end, const char *name)
@@ -303,8 +332,11 @@ static int xf16cam_http_ota(int fd, char *body, int body_length, int content_len
 	}
 	if (ota_push_finish() != OTA_STATUS_OK)
 		goto fail;
-	xf16cam_http_begin(fd, "200 OK", "text/plain; charset=utf-8");
-	xf16cam_http_send_text(fd, "Update verified. Rebooting...");
+	{
+		static const char success[] = "Update verified. Rebooting...";
+		xf16cam_http_begin_length(fd, "200 OK", "text/plain; charset=utf-8", sizeof(success) - 1);
+		xf16cam_http_send_all(fd, success, sizeof(success) - 1);
+	}
 	return XF16CAM_HTTP_OTA_REBOOT;
 
 fail:
@@ -324,6 +356,7 @@ static int xf16cam_http_handle(int fd)
 	int content_length = 0;
 	char ssid[XF16CAM_SSID_MAX_LEN + 1];
 	char psk[XF16CAM_PSK_MAX_LEN + 1];
+	char mode[8];
 
 	memset(g_request, 0, sizeof(g_request));
 	header_end = NULL;
@@ -368,6 +401,13 @@ static int xf16cam_http_handle(int fd)
 
 	if (strcmp(method, "GET") == 0 && strcmp(path, "/") == 0) {
 		xf16cam_http_page(fd);
+	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/stream.mjpeg") == 0) {
+		if (xf16cam_config_get()->media_mode != XF16CAM_MEDIA_WEB)
+			xf16cam_http_message(fd, "409 Conflict", "Browser video mode is not active.");
+		else if (xf16cam_mjpeg_start(fd) != 0)
+			xf16cam_http_message(fd, "503 Service Unavailable", "A browser video client is already active.");
+		else
+			return XF16CAM_HTTP_DETACH_CLIENT;
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/scan") == 0) {
 		xf16cam_http_scan_json(fd);
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/wifi") == 0) {
@@ -386,6 +426,15 @@ static int xf16cam_http_handle(int fd)
 			return 0;
 		}
 		xf16cam_http_message(fd, "200 OK", "Setup AP restored. Rebooting...");
+		return XF16CAM_HTTP_COLD_REBOOT;
+	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/media") == 0) {
+		if (xf16cam_form_value(body, "mode", mode, sizeof(mode)) != 0 ||
+		    xf16cam_config_save_media(strcmp(mode, "web") == 0 ? XF16CAM_MEDIA_WEB :
+		                              strcmp(mode, "rtsp") == 0 ? XF16CAM_MEDIA_RTSP : 0) != 0) {
+			xf16cam_http_message(fd, "400 Bad Request", "Invalid camera mode.");
+			return XF16CAM_HTTP_KEEP_RUNNING;
+		}
+		xf16cam_http_message(fd, "200 OK", "Camera mode saved. Rebooting...");
 		return XF16CAM_HTTP_COLD_REBOOT;
 	} else {
 		xf16cam_http_message(fd, "404 Not Found", "Page not found.");
@@ -419,7 +468,10 @@ static void xf16cam_http_task(void *arg)
 		if (client < 0)
 			continue;
 		setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &((int){XF16CAM_HTTP_TIMEOUT_MS}), sizeof(int));
+		setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &((int){XF16CAM_HTTP_TIMEOUT_MS}), sizeof(int));
 		action = xf16cam_http_handle(client);
+		if (action == XF16CAM_HTTP_DETACH_CLIENT)
+			continue;
 		closesocket(client);
 		if (action != XF16CAM_HTTP_KEEP_RUNNING) {
 			OS_MSleep(750);

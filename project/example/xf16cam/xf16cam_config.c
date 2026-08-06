@@ -117,3 +117,11 @@ int xf16cam_config_save_ap(void)
 	memset(g_config.psk, 0, sizeof(g_config.psk));
 	return xf16cam_config_write();
 }
+
+int xf16cam_config_save_media(XF16CamMediaMode mode)
+{
+	if (mode != XF16CAM_MEDIA_RTSP && mode != XF16CAM_MEDIA_WEB)
+		return -1;
+	g_config.media_mode = mode;
+	return xf16cam_config_write();
+}

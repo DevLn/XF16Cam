@@ -32,5 +32,6 @@ int xf16cam_config_init(void);
 const XF16CamConfig *xf16cam_config_get(void);
 int xf16cam_config_save_sta(const char *ssid, const char *psk);
 int xf16cam_config_save_ap(void);
+int xf16cam_config_save_media(XF16CamMediaMode mode);
 
 #endif
