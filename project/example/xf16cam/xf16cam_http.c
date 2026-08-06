@@ -5,6 +5,7 @@
 #include <strings.h>
 
 #include "kernel/os/os.h"
+#include "driver/chip/hal_flash.h"
 #include "driver/chip/hal_prcm.h"
 #include "driver/chip/hal_wdg.h"
 #include "lwip/sockets.h"
@@ -45,6 +46,27 @@ static size_t xf16cam_http_heap_headroom(void)
 
 	heap_get_space(&start, &end, &current);
 	return (size_t)(end - current);
+}
+
+static void xf16cam_http_flash_info(uint32_t *jedec, uint32_t *size)
+{
+	struct FlashDev *device = getFlashDev(0);
+	struct FlashChip *chip = device != NULL ? getFlashChip(device) : NULL;
+	uint32_t capacity;
+
+	*jedec = 0;
+	*size = 0;
+	if (chip == NULL || HAL_Flash_Open(0, 1000) != HAL_OK)
+		return;
+	device->drv->open(chip);
+	chip->jedecID(chip, jedec);
+	(device->drv->close)(chip);
+	HAL_Flash_Close(0);
+
+	/* The third JEDEC byte is the binary capacity exponent for SPI NOR. */
+	capacity = (*jedec >> 16) & 0xff;
+	if (capacity >= 16 && capacity < 32)
+		*size = 1UL << capacity;
 }
 
 static const char g_page_head[] =
@@ -127,8 +149,12 @@ static void xf16cam_http_send_escaped(int fd, const uint8_t *text, size_t length
 static void xf16cam_http_page(int fd)
 {
 	const XF16CamConfig *config = xf16cam_config_get();
+	uint32_t flash_jedec;
+	uint32_t flash_size;
 	char dynamic[512];
 	int length;
+
+	xf16cam_http_flash_info(&flash_jedec, &flash_size);
 
 	xf16cam_http_begin(fd, "200 OK", "text/html; charset=utf-8");
 	xf16cam_http_send_text(fd, g_page_head);
@@ -137,14 +163,17 @@ static void xf16cam_http_page(int fd)
 	                  "<section><h2>Device</h2><div class=grid>"
 	                  "<b>Network mode</b><span>%s</span><b>IP address</b><span>%s</span>"
 	                  "<b>Free SRAM</b><span>%lu bytes</span><b>Camera</b><span>GC0328, 320x240 JPEG</span>"
-	                  "<b>Flash</b><span>1 MiB SPI NOR</span></div></section>"
-	                  "<section><h2>Wi-Fi setup</h2><p>Choose a nearby network or type its SSID.</p>"
-	                  "<form method=post action=/api/wifi><label>SSID"
-	                  "<input name=ssid list=networks maxlength=32 required value=\"",
+	                  "<b>Flash JEDEC ID</b><span>%06lx</span><b>Flash capacity</b><span>%lu KiB</span>"
+	                  "<b>Microphone</b><span>Internal codec AMIC</span></div></section>",
 	                  XF16CAM_VERSION,
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Setup AP",
-	                  xf16cam_net_ip(), (unsigned long)xf16cam_http_heap_headroom());
+	                  xf16cam_net_ip(), (unsigned long)xf16cam_http_heap_headroom(),
+	                  (unsigned long)(flash_jedec & 0xffffff), (unsigned long)(flash_size / 1024));
 	xf16cam_http_send_all(fd, dynamic, length);
+	xf16cam_http_send_text(fd,
+	                  "<section><h2>Wi-Fi setup</h2><p>Choose a nearby network or type its SSID.</p>"
+	                  "<form method=post action=/api/wifi><label>SSID"
+	                  "<input name=ssid list=networks maxlength=32 required value=\"");
 	xf16cam_http_send_escaped(fd, (const uint8_t *)config->ssid, strlen(config->ssid), 0);
 	xf16cam_http_send_text(fd,
 	                  "\"></label><datalist id=networks></datalist>"
@@ -170,6 +199,17 @@ static void xf16cam_http_page(int fd)
 	                  "<button name=mode value=web onclick=\"let v=document.querySelector('#video');if(v)v.src=''\">Browser video</button> "
 	                  "<button name=mode value=rtsp onclick=\"let v=document.querySelector('#video');if(v)v.src=''\">RTSP</button></form>"
 	                  "<small>Only one mode is initialized at a time; changing it reboots the camera.</small></section>");
+	xf16cam_http_send_text(fd,
+	                  "<section><h2>XF16 pin map</h2><div class=grid>"
+	                  "<b>Camera CSI</b><span>PA0-PA11</span>"
+	                  "<b>Camera control</b><span>PA14</span>"
+	                  "<b>Status LED</b><span>PA21 (factory-confirmed)</span>"
+	                  "<b>Camera power rail</b><span>PA23</span>"
+	                  "<b>SD card</b><span>PB16 CMD, PB17 D0, PB18 CLK</span>"
+	                  "<b>Console</b><span>PB0 TX, PB1 RX</span>"
+	                  "<b>SPI flash</b><span>PB2-PB7</span>"
+	                  "<b>Buttons</b><span>Identification in progress</span>"
+	                  "</div></section>");
 	xf16cam_http_send_text(fd,
 	                  "<script>async function scan(){let s=document.querySelector('#scan');s.textContent='Scanning...';"
 	                  "try{let a=await(await fetch('/api/scan')).json(),d=document.querySelector('#networks');d.innerHTML='';"

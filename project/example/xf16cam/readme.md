@@ -13,6 +13,7 @@ into a single-client RTSP stream without PSRAM or an SD card.
   configuration as the web page and reboots without exposing the password.
 - Stream: `rtsp://<device-ip>:8554/stream`
 - The web page can switch exclusively between RTSP and an embedded MJPEG view.
+- Device information reports the detected flash ID/capacity and known XF16 pin map.
 - Transport: RTP/JPEG (RFC 2435) interleaved over RTSP/TCP
 - Image: 320 x 240, JPEG quality 60
 
@@ -23,6 +24,17 @@ The capture arena contains two 50 KiB JPEG buffers and no YUV framebuffer.
 Camera power, CSI/JPEG, Wi-Fi, and the RTSP listener are initialized only by
 this example. `PRJCONF_CONSOLE_EN` remains enabled for serial recovery and
 reflashing.
+
+## Confirmed XF16 hardware
+
+- GC0328 CSI: PA0-PA11; camera control: PA14; camera power rail: PA23
+- Factory status LED: PA21
+- Microphone: XR872 internal codec analog microphone (AMIC) input, not a GPIO
+- SD card: PB16 CMD, PB17 D0, PB18 CLK
+- Console: PB0 TX, PB1 RX; SPI flash: PB2-PB7
+
+The two button connections are still being identified and are not driven by
+the firmware.
 
 ## Linux build
 
