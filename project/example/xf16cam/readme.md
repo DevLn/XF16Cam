@@ -1,7 +1,7 @@
-# XF16 GC0328 RTSP proof
+# XF16Cam RTSP camera
 
-This isolated example turns the working XF16/XR872ET GC0328 JPEG bring-up
-into a single-client RTSP stream without PSRAM or an SD card.
+This isolated example turns the XF16/XR872ET camera JPEG path into a
+single-client RTSP stream without PSRAM or an SD card.
 
 - First boot starts setup AP `XF16CAM` / `xf16camera` at `192.168.4.1`.
 - Its DHCP server leases `192.168.4.100` to the setup client.
@@ -20,8 +20,31 @@ into a single-client RTSP stream without PSRAM or an SD card.
   The page reports total/free space and can explicitly format a card as FAT32.
 - Transport: RTP/JPEG (RFC 2435) interleaved over RTSP/TCP
 - Image: 320 x 240, JPEG quality 60
-- Sensor probing and driver dispatch use a small descriptor registry; adding a
-  supported QVGA sensor does not require changes to the shared camera core.
+- Sensor probing and driver dispatch use a small descriptor registry and one
+  register-table backend; adding a compatible sensor does not require changes
+  to the shared camera core.
+
+## Camera sensors
+
+- GC0328 (`0x9d`): native XR872 driver, QVGA, hardware validated on XF16.
+- GC0308 (`0x9b`): compacted XR872 SDK VGA table, hardware half-scaled to QVGA;
+  compiled but awaiting matching-sensor validation.
+- HI704 (`0x96`): factory FTY/X5/X6 VGA table, hardware half-scaled to QVGA;
+  compiled but awaiting matching-sensor validation.
+- SP0A20 (`0x2b`): factory HQT6 VGA table, hardware half-scaled to QVGA;
+  compiled but awaiting matching-sensor validation.
+- SP0828 (`0x0c`): factory FTY/X5/X6 24 MHz portrait table at 240 x 320;
+  compiled but awaiting matching-sensor validation.
+
+The Taixin-derived tables are deliberately limited to byte-exact sequences
+corroborated by the supplied factory-firmware research bundle. The alternative
+SP0828 tables are not included: the FTY/X5/X6 variant matches the XR872 A9
+family and the fixed 24 MHz sensor clock. Register tables live in XIP flash and
+share one retrying SCCB writer, avoiding per-sensor code and runtime state.
+They were adapted from the camera-driver evidence associated with
+`NonPIayerCharacter/OpenTXW81X`; its repository currently has no visible
+top-level licence, so provenance should be resolved before redistributing those
+three tables beyond this research firmware.
 
 For VLC, force RTSP-over-TCP if it does not select it automatically. For
 FFmpeg/ffplay use `-rtsp_transport tcp`.

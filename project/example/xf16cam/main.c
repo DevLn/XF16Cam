@@ -196,6 +196,12 @@ static int camera_init(void)
 		printf("HAL_CAMERA_Init failed\n");
 		return -1;
 	}
+	if (xf16cam_sensor_configure_camera(camera_cfg.jpeg_cfg.width,
+	                                  camera_cfg.jpeg_cfg.height) != 0) {
+		printf("xf16cam camera: geometry configuration failed\n");
+		camera_deinit();
+		return -1;
+	}
 	return 0;
 }
 
