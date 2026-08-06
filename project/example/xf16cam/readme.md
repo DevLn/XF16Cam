@@ -95,10 +95,14 @@ The flashable result is
 
 ## 1 MiB flash layout
 
-- `0-540 KiB`: bootloader, application, and WLAN firmware
-- `540-544 KiB`: reserved primary-image margin
-- `544-548 KiB`: SDK OTA metadata
-- `548-1016 KiB`: compressed, verified OTA staging image
+- `0-32 KiB`: bootloader and reserved space
+- `32-86 KiB`: SRAM-loaded application
+- `86-560 KiB`: XIP application (about 83 KiB free at v0.11.1)
+- `560-598 KiB`: WLAN firmware
+- `598-636 KiB`: reserved primary-image growth
+- `636-640 KiB`: guard space
+- `640-644 KiB`: SDK OTA metadata
+- `644-1016 KiB`: compressed, verified OTA staging image
 - `1016-1020 KiB`: XF16Cam configuration (FDCM)
 - `1020-1024 KiB`: SDK system information
 
