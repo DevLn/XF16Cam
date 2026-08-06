@@ -199,7 +199,19 @@ static void xf16cam_http_page(int fd)
 	if (config->media_mode == XF16CAM_MEDIA_WEB) {
 		xf16cam_http_send_text(fd,
 		                  "<img id=video src=/stream.mjpeg alt='Live camera' "
-		                  "style='width:320px;max-width:100%;height:auto;background:#111'>");
+		                  "style='width:320px;max-width:100%;height:auto;background:#111'>"
+		                  "<p><button type=button id=listen onclick=toggleAudio()>Listen</button> "
+		                  "<span id=audioState>Audio stopped</span></p>"
+		                  "<script>let ac,reader,next=0;function ulaw(v){let u=(~v)&255,t=((u&15)<<3)+132;"
+		                  "t<<=(u&112)>>4;return((u&128)?132-t:t-132)/32768}async function toggleAudio(){"
+		                  "let b=document.querySelector('#listen'),s=document.querySelector('#audioState');"
+		                  "if(ac){if(reader)await reader.cancel();await ac.close();ac=reader=null;b.textContent='Listen';s.textContent='Audio stopped';return}"
+		                  "try{ac=new AudioContext();await ac.resume();reader=(await fetch('/stream.pcmu')).body.getReader();"
+		                  "b.textContent='Stop audio';s.textContent='Listening';next=ac.currentTime+.15;while(ac){let r=await reader.read();"
+		                  "if(r.done)break;let q=ac.createBuffer(1,r.value.length,8000),d=q.getChannelData(0);"
+		                  "for(let i=0;i<d.length;i++)d[i]=ulaw(r.value[i]);let n=ac.createBufferSource();n.buffer=q;n.connect(ac.destination);"
+		                  "let at=Math.max(next,ac.currentTime+.04);n.start(at);next=at+q.duration}}catch(e){s.textContent='Audio connection failed';"
+		                  "if(ac)await ac.close();ac=reader=null;b.textContent='Listen'}}</script>");
 	} else {
 		length = snprintf(dynamic, sizeof(dynamic),
 		                  "<p><a href='rtsp://%s:8554/stream'>rtsp://%s:8554/stream</a></p>",
@@ -488,6 +500,13 @@ static int xf16cam_http_handle(int fd)
 			xf16cam_http_message(fd, "409 Conflict", "Browser video mode is not active.");
 		else if (xf16cam_mjpeg_start(fd) != 0)
 			xf16cam_http_message(fd, "503 Service Unavailable", "A browser video client is already active.");
+		else
+			return XF16CAM_HTTP_DETACH_CLIENT;
+	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/stream.pcmu") == 0) {
+		if (xf16cam_config_get()->media_mode != XF16CAM_MEDIA_WEB)
+			xf16cam_http_message(fd, "409 Conflict", "Browser video mode is not active.");
+		else if (xf16cam_audio_http_start(fd) != 0)
+			xf16cam_http_message(fd, "503 Service Unavailable", "A browser audio client is already active.");
 		else
 			return XF16CAM_HTTP_DETACH_CLIENT;
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/scan") == 0) {

@@ -5,12 +5,14 @@
 #include "audio/manager/audio_manager.h"
 #include "audio/pcm/audio_pcm.h"
 #include "kernel/os/os.h"
+#include "lwip/sockets.h"
 
 #include "xf16cam_audio.h"
 
 #define XF16CAM_AUDIO_RATE          (8000)
 #define XF16CAM_AUDIO_RING_PACKETS  (8)
 #define XF16CAM_AUDIO_STACK_SIZE    (1536)
+#define XF16CAM_AUDIO_HTTP_STACK    (1536)
 #define XF16CAM_AUDIO_MIC_LEVEL     (VOLUME_LEVEL3)
 
 typedef struct {
@@ -20,9 +22,25 @@ typedef struct {
 } XF16CamAudioPacket;
 
 static OS_Thread_t g_audio_thread;
+static OS_Thread_t g_audio_http_thread;
 static XF16CamAudioPacket g_audio_ring[XF16CAM_AUDIO_RING_PACKETS];
 static volatile uint32_t g_audio_packets;
 static XF16CamAudioInfo g_audio_info;
+static volatile int g_audio_http_active;
+
+static int xf16cam_audio_send_all(int fd, const void *data, uint32_t length)
+{
+	const uint8_t *cursor = data;
+
+	while (length > 0) {
+		int sent = send(fd, cursor, length, 0);
+		if (sent <= 0)
+			return -1;
+		cursor += sent;
+		length -= (uint32_t)sent;
+	}
+	return 0;
+}
 
 /* ITU-T G.711 mu-law encoder. */
 static uint8_t xf16cam_mulaw(int16_t sample)
@@ -105,6 +123,49 @@ int xf16cam_audio_start(void)
 	g_audio_packets = 0;
 	return OS_ThreadCreate(&g_audio_thread, "xf16cam-audio", xf16cam_audio_task, NULL,
 	                       OS_THREAD_PRIO_APP, XF16CAM_AUDIO_STACK_SIZE) == OS_OK ? 0 : -1;
+}
+
+static void xf16cam_audio_http_task(void *arg)
+{
+	static const char header[] =
+		"HTTP/1.1 200 OK\r\nContent-Type: audio/basic\r\n"
+		"Cache-Control: no-store\r\nConnection: close\r\n\r\n";
+	uint8_t pcmu[XF16CAM_AUDIO_SAMPLES_PER_PACKET];
+	uint32_t cursor = xf16cam_audio_cursor();
+	uint32_t timestamp;
+	int fd = (int)(intptr_t)arg;
+
+	if (xf16cam_audio_send_all(fd, header, sizeof(header) - 1) == 0) {
+		printf("xf16cam WEB audio: PCMU/8000 client connected\n");
+		while (1) {
+			int ready = xf16cam_audio_read(&cursor, pcmu, &timestamp);
+			(void)timestamp;
+			if (ready > 0) {
+				if (xf16cam_audio_send_all(fd, pcmu, sizeof(pcmu)) != 0)
+					break;
+			} else {
+				OS_MSleep(5);
+			}
+		}
+	}
+	closesocket(fd);
+	g_audio_http_active = 0;
+	printf("xf16cam WEB audio client stopped\n");
+	OS_ThreadDelete(&g_audio_http_thread);
+}
+
+int xf16cam_audio_http_start(int fd)
+{
+	if (!g_audio_info.active || g_audio_http_active)
+		return -1;
+	g_audio_http_active = 1;
+	if (OS_ThreadCreate(&g_audio_http_thread, "xf16cam-web-audio", xf16cam_audio_http_task,
+	                    (void *)(intptr_t)fd, OS_THREAD_PRIO_APP,
+	                    XF16CAM_AUDIO_HTTP_STACK) != OS_OK) {
+		g_audio_http_active = 0;
+		return -1;
+	}
+	return 0;
 }
 
 const XF16CamAudioInfo *xf16cam_audio_info(void)
