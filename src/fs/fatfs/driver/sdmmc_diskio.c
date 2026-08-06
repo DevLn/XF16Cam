@@ -183,7 +183,7 @@ DRESULT SDMMC_ioctl(BYTE cmd, void *buff)
     break;
 
   /* Get number of sectors on the disk (DWORD) */
-  case GET_SECTOR_COUNT :
+  case GET_SECTOR_COUNT : {
 #if ((_USE_MKFS == 0) || (_FS_READONLY == 1))
     res = RES_OK;
 #else
@@ -195,6 +195,7 @@ DRESULT SDMMC_ioctl(BYTE cmd, void *buff)
     	res = RES_PARERR; /* not support now */
 #endif
     break;
+  }
 
   /* Get R/W sector size (WORD) */
   case GET_SECTOR_SIZE :

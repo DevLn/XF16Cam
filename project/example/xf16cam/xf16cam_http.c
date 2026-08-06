@@ -17,6 +17,7 @@
 #include "xf16cam_http.h"
 #include "xf16cam_media.h"
 #include "xf16cam_net.h"
+#include "xf16cam_storage.h"
 #include "xf16cam_version.h"
 
 #define XF16CAM_HTTP_PORT         (80)
@@ -150,6 +151,7 @@ static void xf16cam_http_send_escaped(int fd, const uint8_t *text, size_t length
 static void xf16cam_http_page(int fd)
 {
 	const XF16CamConfig *config = xf16cam_config_get();
+	const XF16CamStorageInfo *storage = xf16cam_storage_info();
 	uint32_t flash_jedec;
 	uint32_t flash_size;
 	char dynamic[512];
@@ -204,6 +206,22 @@ static void xf16cam_http_page(int fd)
 	                  "<button name=mode value=web onclick=\"let v=document.querySelector('#video');if(v)v.src=''\">Browser video</button> "
 	                  "<button name=mode value=rtsp onclick=\"let v=document.querySelector('#video');if(v)v.src=''\">RTSP</button></form>"
 	                  "<small>Only one mode is initialized at a time; changing it reboots the camera.</small></section>");
+	xf16cam_http_send_text(fd,
+	                  "<section><h2>SD card</h2><div class=grid><b>Status</b><span>");
+	if (storage->mounted) {
+		length = snprintf(dynamic, sizeof(dynamic),
+		                  "Mounted</span><b>Capacity</b><span>%lu MiB</span>"
+		                  "<b>Free space</b><span>%lu MiB</span></div>",
+		                  (unsigned long)storage->total_mb, (unsigned long)storage->free_mb);
+		xf16cam_http_send_all(fd, dynamic, length);
+	} else {
+		xf16cam_http_send_text(fd, "Not mounted</span></div>");
+	}
+	xf16cam_http_send_text(fd,
+	                  "<form method=post action=/api/sd/refresh><button type=submit>Check card</button></form>"
+	                  "<form method=post action=/api/sd/format onsubmit=\"return confirm('Erase and format the SD card?')\">"
+	                  "<button type=submit>Format FAT32</button></form>"
+	                  "<small>Formatting permanently erases the card.</small></section>");
 	xf16cam_http_send_text(fd,
 	                  "<section><h2>XF16 pin map</h2><div class=grid>"
 	                  "<b>Camera CSI</b><span>PA0-PA11</span>"
@@ -482,6 +500,16 @@ static int xf16cam_http_handle(int fd)
 		}
 		xf16cam_http_message(fd, "200 OK", "Camera mode saved. Rebooting...");
 		return XF16CAM_HTTP_COLD_REBOOT;
+	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/sd/refresh") == 0) {
+		if (xf16cam_storage_refresh() != 0)
+			xf16cam_http_message(fd, "503 Service Unavailable", "No readable FAT SD card was found.");
+		else
+			xf16cam_http_message(fd, "200 OK", "SD card mounted. Return to the main page for capacity details.");
+	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/sd/format") == 0) {
+		if (xf16cam_storage_format() != 0)
+			xf16cam_http_message(fd, "500 Internal Server Error", "SD card formatting failed.");
+		else
+			xf16cam_http_message(fd, "200 OK", "SD card formatted as FAT32.");
 	} else {
 		xf16cam_http_message(fd, "404 Not Found", "Page not found.");
 	}

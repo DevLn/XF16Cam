@@ -67,6 +67,12 @@ static void xf16cam_board_task(void *arg)
 			led = 1;
 			HAL_GPIO_WritePin(GPIO_PORT_A, XF16CAM_LED_PIN, GPIO_PIN_HIGH);
 		}
+		if (!g_board_ready) {
+			mode_held_ms = 0;
+			reset_held_ms = 0;
+			OS_MSleep(XF16CAM_BUTTON_POLL_MS);
+			continue;
+		}
 
 		if (mode_pressed) {
 			mode_held_ms += XF16CAM_BUTTON_POLL_MS;

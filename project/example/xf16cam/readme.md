@@ -16,6 +16,8 @@ into a single-client RTSP stream without PSRAM or an SD card.
 - Device information reports the detected flash ID/capacity and known XF16 pin map.
 - PA15 short-press switches Web/RTSP mode; PA20 held for three seconds restores
   the setup AP. PA21 blinks during startup and stays on when services are ready.
+- An optional one-bit SD card can be mounted and inspected from the web page.
+  The page reports total/free space and can explicitly format a card as FAT32.
 - Transport: RTP/JPEG (RFC 2435) interleaved over RTSP/TCP
 - Image: 320 x 240, JPEG quality 60
 

@@ -25,6 +25,7 @@
 #include "xf16cam_http.h"
 #include "xf16cam_media.h"
 #include "xf16cam_net.h"
+#include "xf16cam_storage.h"
 #include "xf16cam_version.h"
 
 #define JPEG_ONLINE_EN           (1)
@@ -787,6 +788,7 @@ int main(void)
 	}
 	xf16cam_config_init();
 	xf16cam_board_init();
+	xf16cam_storage_init();
 	if (xf16cam_net_start(xf16cam_config_get()) != 0)
 		return -1;
 	xf16cam_http_start();

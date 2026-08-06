@@ -58,7 +58,8 @@ extern "C" {
 /* uart enable/disable */
 #define PRJCONF_UART_EN                 1
 
-#define PRJCONF_MMC_EN                  0
+#define PRJCONF_MMC_EN                  1
+#define PRJCONF_MMC_DETECT_MODE         CARD_ALWAYS_PRESENT
 /* console enable/disable */
 #define PRJCONF_CONSOLE_EN              1
 
