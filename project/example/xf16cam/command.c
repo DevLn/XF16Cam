@@ -27,51 +27,101 @@
  *  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "common/cmd/cmd_util.h"
-#include "common/cmd/cmd.h"
+#include <stdio.h>
+#include <string.h>
+
+#include "console/console.h"
 #include "driver/chip/hal_prcm.h"
 #include "driver/chip/hal_wdg.h"
+#include "kernel/os/os.h"
 
 #include "xf16cam_config.h"
 
-static enum cmd_status cmd_xf16cam_wifi_exec(char *cmd)
+static char *xf16cam_cmd_arg(char **cursor)
 {
-	char *argv[3];
-	int argc = cmd_parse_argv(cmd, argv, cmd_nitems(argv));
-	int ret;
+	char *arg;
+	char *p = *cursor;
 
-	if (argc == 1 && strcmp(argv[0], "ap") == 0) {
+	while (*p == ' ' || *p == '\t')
+		++p;
+	if (*p == '\0') {
+		*cursor = p;
+		return NULL;
+	}
+	arg = p;
+	while (*p != '\0' && *p != ' ' && *p != '\t')
+		++p;
+	if (*p != '\0')
+		*p++ = '\0';
+	*cursor = p;
+	return arg;
+}
+
+static void xf16cam_cmd_response(int status, int prompt)
+{
+	static const char *const responses[] = {
+		"<ACK> 0 OK\n",
+		"<ACK> 1 Unknown command\n",
+		"<ACK> 2 Invalid argument\n",
+		"<ACK> 3 Fail\n",
+	};
+
+	if (status < 0 || status >= (int)(sizeof(responses) / sizeof(responses[0])))
+		status = 3;
+	console_write((uint8_t *)responses[status], strlen(responses[status]));
+	if (prompt)
+		console_write((uint8_t *)"$ ", 2);
+}
+
+static void xf16cam_cmd_reboot(PRCM_CPUABootFlag flag)
+{
+	xf16cam_cmd_response(0, 0);
+	HAL_PRCM_SetCPUABootFlag(flag);
+	HAL_WDG_Reboot();
+}
+
+static void xf16cam_cmd_wifi(char *args)
+{
+	char *mode = xf16cam_cmd_arg(&args);
+	char *ssid;
+	char *password;
+	int ret = -1;
+
+	if (mode && strcmp(mode, "ap") == 0 && xf16cam_cmd_arg(&args) == NULL) {
 		ret = xf16cam_config_save_ap();
-	} else if (argc == 3 && strcmp(argv[0], "sta") == 0) {
-		ret = xf16cam_config_save_sta(argv[1], argv[2]);
+	} else if (mode && strcmp(mode, "sta") == 0) {
+		ssid = xf16cam_cmd_arg(&args);
+		password = xf16cam_cmd_arg(&args);
+		if (ssid && password && xf16cam_cmd_arg(&args) == NULL)
+			ret = xf16cam_config_save_sta(ssid, password);
 	} else {
 		printf("usage: wifi ap | wifi sta <ssid> <password>\n");
-		return CMD_STATUS_INVALID_ARG;
 	}
 
 	if (ret != 0) {
-		printf("wifi config rejected\n");
-		return CMD_STATUS_FAIL;
+		xf16cam_cmd_response(2, 1);
+		return;
 	}
 
 	printf("wifi config saved; rebooting\n");
+	xf16cam_cmd_response(0, 0);
 	OS_MSleep(100);
 	HAL_PRCM_SetCPUABootFlag(PRCM_CPUA_BOOT_FROM_COLD_RESET);
 	HAL_WDG_Reboot();
-	return CMD_STATUS_OK;
 }
-
-/*
- * main commands
- */
-static const struct cmd_data g_main_cmds[] = {
-	{ "upgrade", cmd_upgrade_exec },
-	{ "mem",     cmd_mem_exec },
-	{ "camera",  cmd_camera_exec },
-	{ "wifi",    cmd_xf16cam_wifi_exec },
-};
 
 void main_cmd_exec(char *cmd)
 {
-	cmd_main_exec(cmd, g_main_cmds, cmd_nitems(g_main_cmds));
+	char *cursor = cmd;
+	char *name = xf16cam_cmd_arg(&cursor);
+
+	if (name == NULL) {
+		console_write((uint8_t *)"$ ", 2);
+	} else if (strcmp(name, "upgrade") == 0 && xf16cam_cmd_arg(&cursor) == NULL) {
+		xf16cam_cmd_reboot(PRCM_CPUA_BOOT_FROM_SYS_UPDATE);
+	} else if (strcmp(name, "wifi") == 0) {
+		xf16cam_cmd_wifi(cursor);
+	} else {
+		xf16cam_cmd_response(1, 1);
+	}
 }

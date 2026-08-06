@@ -124,14 +124,8 @@ static CAMERA_Cfg camera_cfg = {
 static void xf16_release_camera_wakeup_hold(void)
 {
 	uint32_t mask = HAL_BIT(4) | HAL_BIT(5);
-	uint32_t before = PRCM->CPUA_WAKE_IO_HOLD;
 
 	HAL_PRCM_WakeupIODisableCfgHold(mask);
-	printf("xf16 wake hold release: mask=0x%08lx before=0x%08lx after=0x%08lx wake_en=0x%08lx\n",
-	       (unsigned long)mask,
-	       (unsigned long)before,
-	       (unsigned long)PRCM->CPUA_WAKE_IO_HOLD,
-	       (unsigned long)PRCM->CPUA_WAKE_IO_EN);
 }
 
 static void xf16_camera_ctrl_prehold_low(void)
@@ -155,8 +149,6 @@ static void xf16_factory_pa23_prepare(void)
 	param.pull = GPIO_PULL_NONE;
 	HAL_GPIO_Init(XF16_FACTORY_PA23_PORT, XF16_FACTORY_PA23_PIN, &param);
 	HAL_GPIO_WritePin(XF16_FACTORY_PA23_PORT, XF16_FACTORY_PA23_PIN, GPIO_PIN_LOW);
-	printf("xf16 factory PA23 pulse: low %u ms then high\n",
-	       (unsigned int)XF16_FACTORY_PA23_PULSE_MS);
 	OS_MSleep(XF16_FACTORY_PA23_PULSE_MS);
 	HAL_GPIO_WritePin(XF16_FACTORY_PA23_PORT, XF16_FACTORY_PA23_PIN, GPIO_PIN_HIGH);
 }
@@ -170,17 +162,10 @@ static void xf16_board_camera_power_prepare(void)
 	xf16_release_camera_wakeup_hold();
 	xf16_factory_pa23_prepare();
 	xf16_camera_ctrl_prehold_low();
-	printf("camera rail prep done: top_ldo=0x%08lx ldo1=0x%08lx sys_pwr=0x%08lx ldo_sw=0x%08lx wake_hold=0x%08lx wake_en=0x%08lx\n",
-	       (unsigned long)HAL_PRCM_GetTOPLDOVoltage(),
-	       (unsigned long)HAL_PRCM_GetLDO1WorkVolt(),
-	       (unsigned long)HAL_PRCM_GetSysPowerEnableFlags(),
-	       (unsigned long)PRCM->SYS_LDO_SW_CTRL,
-	       (unsigned long)PRCM->CPUA_WAKE_IO_HOLD,
-	       (unsigned long)PRCM->CPUA_WAKE_IO_EN);
 }
 
 /* Factory-style GC0328 detect wrapper used by HAL_CAMERA_Init(). */
-static void xf16_drive_ctrl(GPIO_PinState state, const char *phase)
+static void xf16_drive_ctrl(GPIO_PinState state)
 {
 	GPIO_InitParam param;
 
@@ -189,41 +174,24 @@ static void xf16_drive_ctrl(GPIO_PinState state, const char *phase)
 	param.pull = GPIO_PULL_NONE;
 	HAL_GPIO_Init(XF16_CTRL_PORT, XF16_CTRL_PIN, &param);
 	HAL_GPIO_WritePin(XF16_CTRL_PORT, XF16_CTRL_PIN, state);
-	printf("xf16 wrapper phase=%s ctrl=PA14 state=%u settle_ms=%u\n",
-	       phase,
-	       (unsigned int)state,
-	       (unsigned int)XF16_SETTLE_MS);
 	OS_MSleep(XF16_SETTLE_MS);
 }
 
-static int xf16_sccb_write_reg(I2C_ID bus, uint8_t dev_addr, uint8_t reg, uint8_t value, const char *tag)
+static int xf16_sccb_write_reg(I2C_ID bus, uint8_t dev_addr, uint8_t reg, uint8_t value)
 {
 	int32_t ret;
 	uint8_t tmp = value;
 
 	ret = HAL_I2C_SCCB_Master_Transmit_IT(bus, dev_addr, reg, &tmp);
-	printf("xf16 gc0328 probe %s write dev=0x%02x reg=0x%02x val=0x%02x ret=%ld\n",
-	       tag,
-	       dev_addr,
-	       reg,
-	       value,
-	       (long)ret);
 	return ret == 1;
 }
 
-static int xf16_sccb_read_reg(I2C_ID bus, uint8_t dev_addr, uint8_t reg, uint8_t *value, const char *tag)
+static int xf16_sccb_read_reg(I2C_ID bus, uint8_t dev_addr, uint8_t reg, uint8_t *value)
 {
 	int32_t ret;
 
 	*value = 0;
 	ret = HAL_I2C_SCCB_Master_Receive_IT(bus, dev_addr, reg, value);
-	printf("xf16 gc0328 probe %s read dev=0x%02x reg=0x%02x ret=%ld val=0x%02x expect=0x%02x\n",
-	       tag,
-	       dev_addr,
-	       reg,
-	       (long)ret,
-	       *value,
-	       XF16_GC0328_CHIP_ID);
 	return ret == 1;
 }
 
@@ -231,18 +199,14 @@ static int xf16_probe_gc0328(I2C_ID bus, const char *phase, uint8_t *chip_id)
 {
 	uint8_t value;
 
-	printf("xf16 gc0328 probe begin phase=%s dev=0x%02x id_reg=0x%02x expect=0x%02x\n",
-	       phase,
-	       g_gc0328_backend.addr,
-	       g_gc0328_backend.id_reg,
-	       g_gc0328_backend.id_value);
-	if (!xf16_sccb_write_reg(bus, g_gc0328_backend.addr, 0xfe, 0x00, phase))
+	if (!xf16_sccb_write_reg(bus, g_gc0328_backend.addr, 0xfe, 0x00))
 		return 0;
-	if (!xf16_sccb_read_reg(bus, g_gc0328_backend.addr, g_gc0328_backend.id_reg, &value, phase))
+	if (!xf16_sccb_read_reg(bus, g_gc0328_backend.addr, g_gc0328_backend.id_reg, &value))
 		return 0;
 	*chip_id = value;
 	if (value == g_gc0328_backend.id_value) {
-		printf("---->detect %s\n", g_gc0328_backend.name);
+		printf("xf16cam camera: %s detected (id=0x%02x)\n",
+		       g_gc0328_backend.name, value);
 		return 1;
 	}
 	printf("xf16 gc0328 probe mismatch phase=%s got=0x%02x expect=0x%02x\n",
@@ -252,7 +216,7 @@ static int xf16_probe_gc0328(I2C_ID bus, const char *phase, uint8_t *chip_id)
 	return 0;
 }
 
-static HAL_Status xf16_sccb_init_bus(I2C_ID bus, const char *tag)
+static HAL_Status xf16_sccb_init_bus(I2C_ID bus)
 {
 	I2C_InitParam initParam;
 	HAL_Status status;
@@ -260,12 +224,8 @@ static HAL_Status xf16_sccb_init_bus(I2C_ID bus, const char *tag)
 	initParam.addrMode = I2C_ADDR_MODE_7BIT;
 	initParam.clockFreq = 100000;
 	status = HAL_I2C_Init(bus, &initParam);
-	printf("xf16 sccb init %s: bus=%u addr_mode=%u clock=%lu status=%ld\n",
-	       tag,
-	       (unsigned int)bus,
-	       (unsigned int)initParam.addrMode,
-	       (unsigned long)initParam.clockFreq,
-	       (long)status);
+	if (status != HAL_OK)
+		printf("xf16cam camera: SCCB init failed (%ld)\n", (long)status);
 	return status;
 }
 
@@ -301,12 +261,9 @@ static HAL_Status xf16_sensor_detect_wrapper(SENSOR_ConfigParam *cfg)
 
 	bus = (I2C_ID)cfg->i2c_id;
 	g_selected_backend = NULL;
-	printf("xf16 detect ctx: gc0328-only bus=%u ctrl=PA14 settle_ms=%u\n",
-	       (unsigned int)bus,
-	       (unsigned int)XF16_SETTLE_MS);
 
-	xf16_drive_ctrl(GPIO_PIN_HIGH, "primary_high");
-	status = xf16_sccb_init_bus(bus, "after_primary_init");
+	xf16_drive_ctrl(GPIO_PIN_HIGH);
+	status = xf16_sccb_init_bus(bus);
 	if (status != HAL_OK)
 		return HAL_ERROR;
 
@@ -316,8 +273,8 @@ static HAL_Status xf16_sensor_detect_wrapper(SENSOR_ConfigParam *cfg)
 	}
 
 	xf16_sccb_deinit_bus(bus);
-	xf16_drive_ctrl(GPIO_PIN_LOW, "fallback_low");
-	status = xf16_sccb_init_bus(bus, "after_fallback_init");
+	xf16_drive_ctrl(GPIO_PIN_LOW);
+	status = xf16_sccb_init_bus(bus);
 	if (status != HAL_OK)
 		return HAL_ERROR;
 
