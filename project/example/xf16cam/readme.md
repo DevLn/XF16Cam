@@ -21,6 +21,8 @@ single-client RTSP stream without PSRAM or an SD card.
 - Device information reports the detected flash ID/capacity and known XF16 pin map.
 - System diagnostics report minimum spare stack for the HTTP, audio, and board
   workers, making future stack reductions evidence-based.
+- Demand-started AMIC capture discards its 2.1-second analogue settling period
+  before publishing browser or RTSP audio.
 - PA15 short-press switches Web/RTSP mode; PA20 held for three seconds restores
   the setup AP. PA21 blinks during startup and stays on when services are ready.
 - An optional one-bit SD card can be mounted and inspected from the web page.

@@ -16,6 +16,7 @@
 #define XF16CAM_AUDIO_STACK_SIZE    (1536)
 #define XF16CAM_AUDIO_HTTP_STACK    (1536)
 #define XF16CAM_AUDIO_MIC_LEVEL     (VOLUME_LEVEL3)
+#define XF16CAM_AUDIO_WARMUP_PACKETS (105)
 
 typedef struct {
 	uint8_t pcmu[XF16CAM_AUDIO_SAMPLES_PER_PACKET];
@@ -77,6 +78,7 @@ static void xf16cam_audio_task(void *arg)
 	struct pcm_config config;
 	int16_t pcm[XF16CAM_AUDIO_SAMPLES_PER_PACKET];
 	int opened = 0;
+	unsigned int warmup_packets = 0;
 	(void)arg;
 
 	memset(&config, 0, sizeof(config));
@@ -119,8 +121,10 @@ static void xf16cam_audio_task(void *arg)
 				return;
 			}
 			opened = 1;
+			warmup_packets = XF16CAM_AUDIO_WARMUP_PACKETS;
 			g_audio_info.active = 1;
-			printf("xf16cam audio: AMIC capture started, PCMU/8000 gain_level=%u\n",
+			printf("xf16cam audio: AMIC warming for %u ms, gain_level=%u\n",
+			       (unsigned int)(XF16CAM_AUDIO_WARMUP_PACKETS * 20U),
 			       (unsigned int)XF16CAM_AUDIO_MIC_LEVEL);
 		}
 		if (xf16cam_update_active()) {
@@ -136,6 +140,11 @@ static void xf16cam_audio_task(void *arg)
 			g_audio_info.read_errors++;
 			/* Avoid monopolising the CPU if the input device fails immediately. */
 			OS_MSleep(20);
+			continue;
+		}
+		if (warmup_packets > 0) {
+			if (--warmup_packets == 0)
+				printf("xf16cam audio: AMIC settled, PCMU/8000 publishing\n");
 			continue;
 		}
 		for (i = 0; i < XF16CAM_AUDIO_SAMPLES_PER_PACKET; ++i) {
