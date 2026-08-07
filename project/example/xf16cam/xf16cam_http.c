@@ -44,9 +44,12 @@ enum {
 static OS_Thread_t g_http_thread;
 static char g_request[XF16CAM_HTTP_REQUEST_SIZE];
 static wlan_sta_ap_t g_scan_results[XF16CAM_HTTP_SCAN_MAX];
+static uint32_t g_flash_jedec;
+static uint32_t g_flash_size;
 
 extern void heap_get_space(uint8_t **start, uint8_t **end, uint8_t **current);
 
+__xip_text
 static size_t xf16cam_http_heap_headroom(void)
 {
 	uint8_t *start;
@@ -57,6 +60,7 @@ static size_t xf16cam_http_heap_headroom(void)
 	return (size_t)(end - current);
 }
 
+__attribute__((noinline))
 static void xf16cam_http_flash_info(uint32_t *jedec, uint32_t *size)
 {
 	struct FlashDev *device = getFlashDev(0);
@@ -190,14 +194,11 @@ static void xf16cam_http_page(int fd)
 	const XF16CamStorageInfo *storage = xf16cam_storage_info();
 	const struct sysinfo *sysinfo = sysinfo_get();
 	int camera_available = xf16cam_sensor_available();
-	uint32_t flash_jedec;
-	uint32_t flash_size;
 	char camera_detail[48];
 	char camera_output[24];
 	char dynamic[640];
 	int length;
 
-	xf16cam_http_flash_info(&flash_jedec, &flash_size);
 	if (camera_available) {
 		snprintf(camera_detail, sizeof(camera_detail), "%s &middot; %ux%u JPEG",
 		         xf16cam_sensor_name(), (unsigned int)xf16cam_sensor_width(),
@@ -317,10 +318,10 @@ static void xf16cam_http_page(int fd)
 	                  sysinfo->mac_addr[0], sysinfo->mac_addr[1], sysinfo->mac_addr[2],
 	                  sysinfo->mac_addr[3], sysinfo->mac_addr[4], sysinfo->mac_addr[5],
 	                  (unsigned long)xf16cam_http_heap_headroom(),
-	                  (unsigned long)(flash_jedec & 0xff),
-	                  (unsigned long)((flash_jedec >> 8) & 0xff),
-	                  (unsigned long)((flash_jedec >> 16) & 0xff),
-	                  (unsigned long)(flash_size / 1024),
+	                  (unsigned long)(g_flash_jedec & 0xff),
+	                  (unsigned long)((g_flash_jedec >> 8) & 0xff),
+	                  (unsigned long)((g_flash_jedec >> 16) & 0xff),
+	                  (unsigned long)(g_flash_size / 1024),
 	                  xf16cam_board_mode_button_pressed() ? "pressed" : "released",
 	                  xf16cam_board_reset_button_pressed() ? "pressed" : "released");
 	xf16cam_http_send_all(fd, dynamic, length);
@@ -772,11 +773,17 @@ static void xf16cam_http_task(void *arg)
 	OS_ThreadDelete(&g_http_thread);
 }
 
+__xip_text
 int xf16cam_http_start(void)
 {
 	struct sockaddr_in address;
 	int option = 1;
-	int server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	int server;
+
+	/* Query the immutable identity once while executing from SRAM. The page
+	 * renderer lives in XIP and must never disable the flash containing it. */
+	xf16cam_http_flash_info(&g_flash_jedec, &g_flash_size);
+	server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
 	if (server < 0)
 		goto fail;
