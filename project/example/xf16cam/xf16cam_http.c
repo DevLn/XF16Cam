@@ -90,11 +90,11 @@ __xip_rodata static const char g_page_head[] =
 	"<!doctype html><html><head><meta charset=utf-8>"
 	"<meta name=viewport content='width=device-width,initial-scale=1'>"
 	"<title>XF16Cam</title><style>"
-	":root{color-scheme:light;--ink:#18212b;--muted:#647281;--line:#dbe2e8;--brand:#176b5b;--bg:#edf2f4}"
+	":root{--ink:#18212b;--muted:#647281;--line:#dbe2e8;--brand:#176b5b;--bg:#edf2f4}"
 	"*{box-sizing:border-box}body{font:15px system-ui;margin:0;background:var(--bg);color:var(--ink)}"
 	"header,main{width:min(1040px,calc(100% - 28px));margin:auto}header{display:flex;align-items:center;"
 	"justify-content:space-between;padding:18px 0 12px}h1{font-size:1.45rem;margin:0}h2{font-size:1.05rem;margin:0 0 14px}"
-	"p{line-height:1.45}.meta{color:var(--muted);font-size:.85rem}.pill{display:inline-block;padding:5px 9px;"
+	"p{line-height:1.45}.meta{color:var(--muted);font-size:.85rem}.pill{padding:5px 9px;"
 	"border-radius:999px;background:#dcece8;color:#125648;font-weight:650}.viewer,.card{background:#fff;border:1px solid var(--line);"
 	"border-radius:12px;box-shadow:0 2px 8px #18212b12}.viewer{padding:14px;margin-bottom:14px}.viewerTop{display:flex;"
 	"justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}.screen{display:grid;place-items:center;"
@@ -105,7 +105,7 @@ __xip_rodata static const char g_page_head[] =
 	"grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.card{padding:16px}.wide{grid-column:1/-1}.grid{display:grid;"
 	"grid-template-columns:max-content 1fr;gap:7px 14px}.grid b{color:#43515e}form{margin:8px 0}label{display:block;margin:8px 0}"
 	"input,button{font:inherit;min-height:44px;padding:9px 11px;margin:4px 0;border:1px solid #b9c5cd;border-radius:7px}input{width:100%;background:#fff;font-size:16px}"
-	"button{cursor:pointer;background:#f7f9fa}button.primary{background:var(--brand);border-color:var(--brand);color:#fff}"
+	"button{background:#f7f9fa}button.primary{background:var(--brand);border-color:var(--brand);color:#fff}"
 	"small{color:var(--muted)}a{color:#096b99}.rtsp{overflow-wrap:anywhere}.nets{display:grid;gap:7px;margin:10px 0}.net{width:100%;display:flex;"
 	"align-items:center;justify-content:space-between;text-align:left;margin:0;background:#fff}.net.sel{border-color:var(--brand);"
 	"box-shadow:0 0 0 2px #176b5b33;background:#f3faf8}.net.empty{justify-content:center;color:var(--muted)}@media(max-width:680px){header{align-items:flex-start}.panel.on{grid-template-columns:1fr}"
@@ -238,7 +238,7 @@ static void xf16cam_http_page(int fd)
 			                  "<img id=video src=/stream.mjpeg alt='Live camera'></div>");
 		else
 			XF16CAM_HTTP_SEND_LITERAL(fd,
-			                  "<div class=empty><b>Camera unavailable</b><p>Connect a supported sensor, then reboot.</p></div></div>");
+				                  "<div class=empty><b>Camera unavailable</b><p>Connect a sensor and reboot.</p></div></div>");
 	} else if (camera_available) {
 		length = snprintf(dynamic, sizeof(dynamic),
 		                  "<div class=rtsp><a href='rtsp://%s:8554/stream'>rtsp://%s:8554/stream</a>"
@@ -247,29 +247,29 @@ static void xf16cam_http_page(int fd)
 		xf16cam_http_send_all(fd, dynamic, length);
 	} else {
 		XF16CAM_HTTP_SEND_LITERAL(fd,
-		                  "<div class=empty><b>Camera unavailable</b><p>RTSP is disabled until a supported sensor is connected.</p></div></div>");
+		                  "<div class=empty><b>Camera unavailable</b><p>Connect a sensor to enable RTSP.</p></div></div>");
 	}
 	if ((config->media_mode == XF16CAM_MEDIA_WEB || !camera_available) && audio->available) {
 		XF16CAM_HTTP_SEND_LITERAL(fd,
 		                  "<div><button type=button id=listen onclick=toggleAudio()>Listen</button> "
 		                  "<span id=audioState aria-live=polite>Audio stopped</span></div>"
-		                  "<script>let ac,reader,next=0;function ulaw(v){let u=(~v)&255,t=((u&15)<<3)+132;"
-		                  "t<<=(u&112)>>4;return((u&128)?132-t:t-132)/32768}async function toggleAudio(){"
+		                  "<script>let a,r,n=0;function u(v){let x=(~v)&255,t=((x&15)<<3)+132;"
+		                  "t<<=(x&112)>>4;return((x&128)?132-t:t-132)/32768}async function toggleAudio(){"
 		                  "let b=document.querySelector('#listen'),s=document.querySelector('#audioState');"
-		                  "if(ac){if(reader)await reader.cancel();await ac.close();ac=reader=null;b.textContent='Listen';s.textContent='Audio stopped';return}"
-		                  "try{ac=new AudioContext();await ac.resume();let f=await fetch('/stream.pcmu');if(!f.ok||!f.body)throw 0;reader=f.body.getReader();"
-		                  "b.textContent='Stop audio';s.textContent='Listening';next=ac.currentTime+.15;while(ac){let r=await reader.read();"
-		                  "if(r.done)break;let q=ac.createBuffer(1,r.value.length,8000),d=q.getChannelData(0);"
-		                  "for(let i=0;i<d.length;i++)d[i]=ulaw(r.value[i]);let n=ac.createBufferSource();n.buffer=q;n.connect(ac.destination);"
-		                  "let at=Math.max(next,ac.currentTime+.04);n.start(at);next=at+q.duration}if(ac)await ac.close();ac=reader=null;"
+		                  "if(a){if(r)await r.cancel();await a.close();a=r=null;b.textContent='Listen';s.textContent='Audio stopped';return}"
+		                  "try{a=new AudioContext;await a.resume();let f=await fetch('/stream.pcmu');if(!f.ok||!f.body)throw 0;r=f.body.getReader();"
+		                  "b.textContent='Stop audio';s.textContent='Listening';n=a.currentTime+.15;while(a){let x=await r.read();"
+		                  "if(x.done)break;let q=a.createBuffer(1,x.value.length,8000),d=q.getChannelData(0);"
+		                  "for(let i=0;i<d.length;i++)d[i]=u(x.value[i]);let o=a.createBufferSource();o.buffer=q;o.connect(a.destination);"
+		                  "let t=Math.max(n,a.currentTime+.04);o.start(t);n=t+q.duration}if(a)await a.close();a=r=null;"
 		                  "b.textContent='Listen';s.textContent='Audio stopped'}catch(e){s.textContent='Audio connection failed';"
-		                  "if(ac)await ac.close();ac=reader=null;b.textContent='Listen'}}</script>");
+		                  "if(a)await a.close();a=r=null;b.textContent='Listen'}}</script>");
 	}
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<form method=post action=/api/media>"
 	                  "<button name=mode value=web onclick=\"let v=document.querySelector('#video');if(v)v.src=''\">Browser video</button> "
 	                  "<button name=mode value=rtsp onclick=\"let v=document.querySelector('#video');if(v)v.src=''\">RTSP</button></form>"
-	                  "<small>Only one mode is initialized at a time; changing it reboots the camera.</small></section>"
+	                  "<small>Changing mode reboots.</small></section>"
 	                  "<nav class=tabs><button type=button data-tab=live onclick=tab('live')>Live</button>"
 	                  "<button type=button data-tab=network onclick=tab('network')>Network</button>"
 	                  "<button type=button data-tab=storage onclick=tab('storage')>Storage</button>"
@@ -289,8 +289,8 @@ static void xf16cam_http_page(int fd)
 
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<div id=network class=panel><section class='card wide'><h2>Wi-Fi setup</h2>"
-	                  "<p>Scan, tap a network, then enter its password. You can also type a hidden SSID.</p>"
-	                  "<button type=button id=scanButton onclick=scan()>Scan nearby networks</button> <span id=scan aria-live=polite></span>"
+	                  "<p>Tap a scan result, or enter a hidden SSID.</p>"
+	                  "<button type=button id=scanButton onclick=scan()>Scan networks</button> <span id=scan aria-live=polite></span>"
 	                  "<div id=networks class=nets aria-live=polite></div>"
 	                  "<form method=post action=/api/wifi><label>Network name (SSID)"
 	                  "<input id=ssid name=ssid maxlength=32 required autocapitalize=none spellcheck=false oninput=clearNet() value=\"");
@@ -309,7 +309,7 @@ static void xf16cam_http_page(int fd)
 		                  (unsigned long)storage->total_mb, (unsigned long)storage->free_mb);
 		xf16cam_http_send_all(fd, dynamic, length);
 	} else {
-		XF16CAM_HTTP_SEND_LITERAL(fd, "Not mounted (not probed at boot)</span></div>");
+		XF16CAM_HTTP_SEND_LITERAL(fd, "Not checked</span></div>");
 	}
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<form method=post action=/api/sd/refresh><button type=submit>Check card</button></form>"
@@ -320,7 +320,7 @@ static void xf16cam_http_page(int fd)
 	length = snprintf(dynamic, sizeof(dynamic),
 	                  "<b>Network mode</b><span>%s</span><b>IP address</b><span>%s</span>"
 	                  "<b>Wi-Fi MAC</b><span>%02X:%02X:%02X:%02X:%02X:%02X (eFuse)</span>"
-	                  "<b>Contiguous heap headroom</b><span>%lu bytes</span><b>Flash JEDEC ID</b><span>%02lX %02lX %02lX</span>"
+	                  "<b>Heap headroom</b><span>%lu bytes</span><b>Flash JEDEC ID</b><span>%02lX %02lX %02lX</span>"
 	                  "<b>Flash capacity</b><span>%lu KiB</span><b>Mode button</b><span>PA15 (%s)</span>"
 	                  "<b>Setup button</b><span>PA20 (%s)</span>",
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Setup AP", xf16cam_net_ip(),
@@ -346,7 +346,7 @@ static void xf16cam_http_page(int fd)
 	                  "<section class=card><h2>XF16 pin map</h2><div class=grid>"
 	                  "<b>Camera CSI</b><span>PA0-PA11</span>"
 	                  "<b>Camera control</b><span>PA14</span>"
-	                  "<b>Status LED</b><span>PA21 (factory-confirmed)</span>"
+	                  "<b>Status LED</b><span>PA21</span>"
 	                  "<b>Battery sense</b><span>PA16 / ADC6</span>"
 	                  "<b>Camera power rail</b><span>PA23</span>"
 	                  "<b>SD card</b><span>PB16 CMD, PB17 D0, PB18 CLK</span>"
@@ -368,31 +368,31 @@ static void xf16cam_http_page(int fd)
 	                  "</div><button type=button onclick=measurePower()>Measure voltage</button>"
 	                  "<form method=post action=/api/hibernate onsubmit=\"return confirm('Hibernate? Press PA20 to wake.')\">"
 	                  "<button type=submit>Hibernate</button></form>"
-	                  "<small>Approximate; no automatic cutoff.</small></section>");
+	                  "<small>Approximate; no auto cutoff.</small></section>");
 	XF16CAM_HTTP_SEND_LITERAL(fd,
-	                  "<section class='card wide'><h2>Firmware update</h2><p>Select an XF16Cam OTA image. Keep power connected until it restarts.</p>"
+	                  "<section class='card wide'><h2>Firmware update</h2><p>Choose an OTA image and keep power connected.</p>"
 	                  "<input id=ota type=file accept=.img><button class=primary type=button onclick=update()>Install update</button> <span id=up aria-live=polite></span></section></div>"
-	                  "<script>function tab(id){document.querySelectorAll('.panel').forEach(e=>e.classList.toggle('on',e.id==id));"
-	                  "document.querySelectorAll('.tabs button').forEach(e=>{let on=e.dataset.tab==id;e.classList.toggle('on',on);e.setAttribute('aria-selected',on)})}"
-	                  "function clearNet(){document.querySelectorAll('.net').forEach(e=>e.classList.remove('sel'))}"
-	                  "function pickNet(b){document.querySelector('#ssid').value=b.dataset.ssid;clearNet();b.classList.add('sel');"
-	                  "document.querySelector('input[name=password]').focus()}"
-	                  "async function scan(){let s=document.querySelector('#scan'),b=document.querySelector('#scanButton'),d=document.querySelector('#networks');"
+	                  "<script>let D=document,$=s=>D.querySelector(s),A=s=>D.querySelectorAll(s);function tab(id){A('.panel').forEach(e=>e.classList.toggle('on',e.id==id));"
+	                  "A('.tabs button').forEach(e=>{let on=e.dataset.tab==id;e.classList.toggle('on',on);e.setAttribute('aria-selected',on)})}"
+	                  "function clearNet(){A('.net').forEach(e=>e.classList.remove('sel'))}"
+	                  "function pickNet(b){$('#ssid').value=b.dataset.ssid;clearNet();b.classList.add('sel');"
+	                  "$('input[name=password]').focus()}"
+	                  "async function scan(){let s=$('#scan'),b=$('#scanButton'),d=$('#networks');"
 	                  "s.textContent='Scanning...';b.disabled=true;d.innerHTML='';try{let r=await fetch('/api/scan');if(!r.ok)throw 0;let a=await r.json();"
-	                  "a.sort((x,y)=>y.rssi-x.rssi);a.forEach(n=>{let o=document.createElement('button'),x=document.createElement('span'),m=document.createElement('span');"
+	                  "a.sort((x,y)=>y.rssi-x.rssi);a.forEach(n=>{let o=D.createElement('button'),x=D.createElement('span'),m=D.createElement('span');"
 	                  "o.type='button';o.className='net';o.dataset.ssid=n.ssid;o.onclick=()=>pickNet(o);x.textContent=n.ssid||'(hidden network)';"
 	                  "m.textContent=n.rssi+' dBm · '+(n.secure?'Secured':'Open');o.append(x,m);d.append(o)});"
 	                  "if(!a.length)d.innerHTML='<div class=\"net empty\">No networks found</div>';s.textContent=a.length+' found'}"
 	                  "catch(e){s.textContent='Scan failed';d.innerHTML='<div class=\"net empty\">Try scanning again</div>'}finally{b.disabled=false}}"
-	                  "async function measurePower(){let b=document.querySelector('#battery');b.textContent='Measuring...';try{let r=await fetch('/api/power',{method:'POST'});"
+	                  "async function measurePower(){let b=$('#battery');b.textContent='Measuring...';try{let r=await fetch('/api/power',{method:'POST'});"
 	                  "if(!r.ok)throw 0;let p=await r.json();b.textContent=p.millivolts+' mV (raw '+p.raw+', approx.)'}catch(e){b.textContent='Measurement failed'}}"
-	                  "async function update(){let f=document.querySelector('#ota').files[0],s=document.querySelector('#up');"
+	                  "async function update(){let f=$('#ota').files[0],s=$('#up');"
 	                  "if(!f){s.textContent='Choose a file';return}if(!confirm('Install '+f.name+' and reboot?'))return;"
 	                  "s.textContent='Uploading...';try{let r=await fetch('/api/ota',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});"
-	                  "s.textContent=await r.text()}catch(e){s.textContent='Connection closed; check whether the camera restarted'}}"
-	                  "async function meter(){if(!document.hidden&&document.querySelector('#live').classList.contains('on'))try{"
-	                  "let a=await(await fetch('/api/audio')).json(),m=document.querySelector('#mic');if(m)m.textContent=a.peak}catch(e){}setTimeout(meter,2000)}"
-	                  "document.addEventListener('visibilitychange',()=>{let v=document.querySelector('#video');if(v)v.src=document.hidden?'':'/stream.mjpeg'});"
+	                  "s.textContent=await r.text()}catch(e){s.textContent='Connection closed; check for reboot'}}"
+	                  "async function meter(){if(!D.hidden&&$('#live').classList.contains('on'))try{"
+	                  "let a=await(await fetch('/api/audio')).json(),m=$('#mic');if(m)m.textContent=a.peak}catch(e){}setTimeout(meter,2000)}"
+	                  "D.addEventListener('visibilitychange',()=>{let v=$('#video');if(v)v.src=D.hidden?'':'/stream.mjpeg'});"
 	                  "tab('live');meter()</script></main></body></html>");
 }
 
