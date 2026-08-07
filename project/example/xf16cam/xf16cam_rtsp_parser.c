@@ -24,6 +24,57 @@ static int xf16cam_ascii_equal(const char *text, const char *expected, size_t le
 }
 
 __xip_text
+int xf16cam_rtsp_contains_ci(const char *text, size_t length, const char *needle)
+{
+	size_t needle_length = strlen(needle);
+	size_t i;
+
+	if (needle_length == 0)
+		return 1;
+	if (needle_length > length)
+		return 0;
+	for (i = 0; i <= length - needle_length; ++i) {
+		if (xf16cam_ascii_equal(text + i, needle, needle_length))
+			return 1;
+	}
+	return 0;
+}
+
+__xip_text
+int xf16cam_rtsp_header_value(const char *request, const char *name,
+			      const char **value, size_t *length)
+{
+	size_t name_length = strlen(name);
+	const char *line = strstr(request, "\r\n");
+
+	*value = NULL;
+	*length = 0;
+	if (line == NULL)
+		return -1;
+	line += 2;
+	while (line[0] != '\0' && !(line[0] == '\r' && line[1] == '\n')) {
+		const char *end = strstr(line, "\r\n");
+		const char *begin;
+
+		if (end == NULL)
+			return -1;
+		if ((size_t)(end - line) > name_length && line[name_length] == ':' &&
+		    xf16cam_ascii_equal(line, name, name_length)) {
+			begin = line + name_length + 1U;
+			while (begin < end && (*begin == ' ' || *begin == '\t'))
+				++begin;
+			while (end > begin && (end[-1] == ' ' || end[-1] == '\t'))
+				--end;
+			*value = begin;
+			*length = (size_t)(end - begin);
+			return 1;
+		}
+		line = end + 2;
+	}
+	return 0;
+}
+
+__xip_text
 static int xf16cam_content_length(const char *data, size_t header_length,
 				  size_t *content_length)
 {

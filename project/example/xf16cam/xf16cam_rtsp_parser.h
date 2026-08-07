@@ -19,5 +19,8 @@ size_t xf16cam_rtsp_parser_writable(const XF16CamRtspParser *parser);
 int xf16cam_rtsp_parser_commit(XF16CamRtspParser *parser, size_t length);
 int xf16cam_rtsp_parser_next(XF16CamRtspParser *parser, const char **request);
 void xf16cam_rtsp_parser_consume(XF16CamRtspParser *parser);
+int xf16cam_rtsp_header_value(const char *request, const char *name,
+			      const char **value, size_t *length);
+int xf16cam_rtsp_contains_ci(const char *text, size_t length, const char *needle);
 
 #endif

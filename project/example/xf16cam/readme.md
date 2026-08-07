@@ -7,6 +7,8 @@ single-client RTSP stream without PSRAM or an SD card.
 - Its DHCP server leases `192.168.4.100` to the setup client.
 - Open `http://192.168.4.1/` to scan for Wi-Fi and save STA credentials.
 - The same page accepts a streamed, verified OTA image and then reboots.
+- OTA has been validated end-to-end on XR872 hardware, including retained Wi-Fi
+  settings, camera reprobe, audio restart, and management-page recovery.
 - Saved settings use a dedicated FDCM sector and survive firmware reflashing.
 - A failed STA connection falls back to the setup AP.
 - Serial recovery: `wifi ap` or `wifi sta <ssid> <password>` saves the same
@@ -23,7 +25,8 @@ single-client RTSP stream without PSRAM or an SD card.
   The page reports total/free space and can explicitly format a card as FAT32.
 - Transport: RTP/JPEG (RFC 2435) interleaved over RTSP/TCP
 - RTSP input is framed across fragmented/coalesced TCP reads, rejects unsupported
-  transports, and applies bounded connection and send waits.
+  transports, accepts case-insensitive RTSP header/transport tokens, and applies
+  bounded connection and send waits.
 - Image: 320 x 240, JPEG quality 60
 - Sensor probing and driver dispatch use a small descriptor registry and one
   register-table backend; adding a compatible sensor does not require changes
@@ -62,6 +65,9 @@ GC0328 retains its validated power-cycle, register-delay, and settle timings.
 The 104 KiB capture arena contains two aligned 50 KiB JPEG buffers and no YUV framebuffer.
 Frames are acquired one at a time so a slow network client cannot race the
 hardware encoder and observe a buffer while it is being overwritten.
+The camera rail/capture arena and AMIC are demand-driven: boot probes the sensor
+for diagnostics, then media hardware remains idle until a browser or RTSP client
+connects and is released again when the client leaves.
 XF16Cam owns camera power, CSI/JPEG, and its media listeners; the SDK platform
 starts the underlying Wi-Fi/lwIP services. `PRJCONF_CONSOLE_EN` remains enabled
 for serial recovery and reflashing.
@@ -126,7 +132,9 @@ bootable. Do not upload the full serial image through the web page.
 
 CI additionally requires at least 8 KiB free in the SRAM-loaded app slot and
 64 KiB free in both the XIP and compressed-OTA areas. This prevents ordinary
-feature growth from silently consuming the final usable bytes.
+feature growth from silently consuming the final usable bytes. A symbol-placement
+check also requires the flash identity query to remain in SRAM and uninlined,
+preventing code from disabling XIP while it is executing from flash.
 
 ## Battery and power-management plan
 
@@ -146,7 +154,7 @@ order is:
 1. Add read-only PA16 raw/millivolt telemetry and report charging as unknown.
 2. Add an explicit hibernation command with PA20 and timer wake, plus wake-reason
    diagnostics.
-3. Make AMIC capture, the camera rail, and the status LED demand-driven.
+3. Make AMIC capture and the camera rail demand-driven. (Implemented.)
 4. Treat OTA, settings/SD writes, and active media clients as sleep inhibitors.
 5. Calibrate against a multimeter with the battery attached, then enable
    percentage estimates and repeated-sample low-voltage hibernation.

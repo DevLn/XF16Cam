@@ -56,6 +56,14 @@ jobs:
           make -C project/example/xf16cam/gcc \
             CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" image_xz
 
+      - name: Check critical code placement
+        shell: bash
+        run: |
+          python3 tools/xf16cam/check_symbol_placement.py \
+            --elf project/example/xf16cam/gcc/xf16cam.axf \
+            --require-sram xf16cam_http_flash_info \
+            --require-xip xf16cam_http_start
+
       - name: Check 1 MiB flash budget
         shell: bash
         run: |

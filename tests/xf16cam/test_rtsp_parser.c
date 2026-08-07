@@ -75,11 +75,30 @@ static void test_rejects_malformed_lengths(void)
 	assert(xf16cam_rtsp_parser_next(&parser, &request) == -1);
 }
 
+static void test_case_insensitive_headers(void)
+{
+	static const char request[] =
+		"SETUP rtsp://cam/stream/track1 RTSP/1.0\r\n"
+		"cSeQ:\t42 \r\n"
+		"tRaNsPoRt: rtp/avp/tcp;Unicast;INTERLEAVED=4-5\r\n\r\n";
+	const char *value;
+	size_t length;
+
+	assert(xf16cam_rtsp_header_value(request, "CSeq", &value, &length) == 1);
+	assert(length == 2U && memcmp(value, "42", 2U) == 0);
+	assert(xf16cam_rtsp_header_value(request, "Transport", &value, &length) == 1);
+	assert(xf16cam_rtsp_contains_ci(value, length, "RTP/AVP/TCP"));
+	assert(xf16cam_rtsp_contains_ci(value, length, "interleaved=4-5"));
+	assert(xf16cam_rtsp_header_value(request, "Session", &value, &length) == 0);
+	assert(xf16cam_rtsp_header_value("broken", "CSeq", &value, &length) == -1);
+}
+
 int main(void)
 {
 	test_split_and_coalesced();
 	test_body_and_interleaved_rtcp();
 	test_rejects_malformed_lengths();
+	test_case_insensitive_headers();
 	puts("xf16cam RTSP parser tests passed");
 	return 0;
 }

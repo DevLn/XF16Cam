@@ -14,6 +14,13 @@ ROOT_PATH := ../../../..
 
 include $(ROOT_PATH)/gcc.mk
 
+# Git Bash reports itself as Msys, but GNU make for Windows can evaluate the
+# tool selection before the requested shell is active. Keep local OTA builds
+# on the native packer; Linux continues to use the extensionless binary.
+ifeq ($(OS),Windows_NT)
+override MKIMAGE := mkimage.exe
+endif
+
 # ----------------------------------------------------------------------------
 # project name and project root path
 # ----------------------------------------------------------------------------

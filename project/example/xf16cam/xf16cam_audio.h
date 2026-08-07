@@ -10,10 +10,13 @@ typedef struct {
 	uint32_t read_errors;
 	uint16_t peak;
 	uint16_t mean;
+	uint8_t available;
 	uint8_t active;
 } XF16CamAudioInfo;
 
 int xf16cam_audio_start(void);
+int xf16cam_audio_acquire(void);
+void xf16cam_audio_release(void);
 int xf16cam_audio_http_start(int fd);
 int xf16cam_audio_update_ready(void);
 const XF16CamAudioInfo *xf16cam_audio_info(void);

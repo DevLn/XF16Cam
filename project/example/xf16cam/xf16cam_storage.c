@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "compiler.h"
 #include "common/framework/fs_ctrl.h"
@@ -63,7 +64,9 @@ int xf16cam_storage_refresh(void)
 __xip_text
 int xf16cam_storage_init(void)
 {
-	return xf16cam_storage_refresh();
+	memset(&g_storage, 0, sizeof(g_storage));
+	printf("xf16cam SD: idle; use Check card to probe\n");
+	return 0;
 }
 
 __xip_text

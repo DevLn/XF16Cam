@@ -295,7 +295,8 @@ void xf16cam_sensor_deinit(SENSOR_ConfigParam *cfg)
 		HAL_GPIO_DeInit(cfg->pwcfg.Pwdn_Port, cfg->pwcfg.Pwdn_Pin);
 		HAL_I2C_DeInit((I2C_ID)cfg->i2c_id);
 	}
-	g_selected = NULL;
+	/* Keep the last detected identity while the rail is idle so management can
+	 * describe the sensor. The next init always probes again before capture. */
 }
 
 __xip_text
