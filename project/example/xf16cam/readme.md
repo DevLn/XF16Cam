@@ -18,8 +18,8 @@ single-client RTSP stream without PSRAM or an SD card.
   a focal embedded MJPEG view that can switch exclusively with RTSP mode.
 - Browser MJPEG frames are terminated as standalone, immutable JPEG images;
   both web and RTSP clients finish sending one frame before the next capture.
-- Device information reports flash identity, the known XF16 pin map, wrap-safe
-  uptime, SDK-cached boot cause, and XR872 die temperature.
+- Device information reports flash identity, the known XF16 pin map, uptime,
+  SDK-cached boot cause, and XR872 die temperature.
 - Runtime diagnostics retain the minimum spare stack values for the HTTP,
   audio, and board workers.
 - Demand-started AMIC capture discards its 2.1-second analogue settling period

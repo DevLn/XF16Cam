@@ -169,6 +169,35 @@ static void xf16cam_http_send_text(int fd, const char *text)
 	xf16cam_http_send_all(fd, text, strlen(text));
 }
 
+__xip_text
+static void xf16cam_http_runtime(int fd, char *dynamic, size_t size)
+{
+	uint32_t uptime = OS_TicksToMSecs(OS_GetTicks()) / 1000U;
+	int temperature = xf16cam_http_temperature();
+	char temperature_text[20];
+	int length;
+
+	if (temperature == INT_MIN)
+		snprintf(temperature_text, sizeof(temperature_text), "Unavailable");
+	else
+		snprintf(temperature_text, sizeof(temperature_text), "%s%d.%d &deg;C",
+		         temperature < 0 ? "-" : "", abs(temperature) / 10,
+		         abs(temperature) % 10);
+	length = snprintf(dynamic, size,
+	                  "<section class=card><h2>Runtime</h2><div class=grid>"
+	                  "<b>Uptime</b><span>%lu days %02lu:%02lu:%02lu</span>"
+	                  "<b>Boot reason</b><span>%s</span>"
+	                  "<b>XR872 temperature</b><span>%s</span>"
+	                  "</div></section>",
+	                  (unsigned long)(uptime / 86400U),
+	                  (unsigned long)((uptime / 3600U) % 24U),
+	                  (unsigned long)((uptime / 60U) % 60U),
+	                  (unsigned long)(uptime % 60U), xf16cam_http_boot_reason(),
+	                  temperature_text);
+	if (length > 0 && (size_t)length < size)
+		xf16cam_http_send_all(fd, dynamic, (size_t)length);
+}
+
 #define XF16CAM_HTTP_JOIN_(a, b) a##b
 #define XF16CAM_HTTP_JOIN(a, b) XF16CAM_HTTP_JOIN_(a, b)
 #define XF16CAM_HTTP_SEND_LITERAL(fd, literal) do { \
@@ -237,8 +266,6 @@ static void xf16cam_http_page(int fd)
 	const XF16CamStorageInfo *storage = xf16cam_storage_info();
 	const XF16CamPowerInfo *power = xf16cam_power_info();
 	const struct sysinfo *sysinfo = sysinfo_get();
-	uint32_t uptime = xf16cam_board_uptime_seconds();
-	int temperature = xf16cam_http_temperature();
 	int camera_available = xf16cam_sensor_available();
 	char camera_detail[48];
 	char camera_output[24];
@@ -381,25 +408,7 @@ static void xf16cam_http_page(int fd)
 	                  (unsigned long)xf16cam_audio_stack_min_free(),
 	                  (unsigned long)xf16cam_board_stack_min_free());
 	xf16cam_http_send_all(fd, dynamic, length);
-	char temperature_text[20];
-	if (temperature == INT_MIN)
-		snprintf(temperature_text, sizeof(temperature_text), "Unavailable");
-	else
-		snprintf(temperature_text, sizeof(temperature_text), "%s%d.%d &deg;C",
-		         temperature < 0 ? "-" : "", abs(temperature) / 10,
-		         abs(temperature) % 10);
-	length = snprintf(dynamic, sizeof(dynamic),
-	                  "<section class=card><h2>Runtime</h2><div class=grid>"
-	                  "<b>Uptime</b><span>%lu days %02lu:%02lu:%02lu</span>"
-	                  "<b>Boot reason</b><span>%s</span>"
-	                  "<b>XR872 temperature</b><span>%s</span>"
-	                  "</div></section>",
-	                  (unsigned long)(uptime / 86400U),
-	                  (unsigned long)((uptime / 3600U) % 24U),
-	                  (unsigned long)((uptime / 60U) % 60U),
-	                  (unsigned long)(uptime % 60U), xf16cam_http_boot_reason(),
-	                  temperature_text);
-	xf16cam_http_send_all(fd, dynamic, length);
+	xf16cam_http_runtime(fd, dynamic, sizeof(dynamic));
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<section class=card><h2>XF16 pin map</h2><div class=grid>"
 	                  "<b>Camera CSI</b><span>PA0-PA11</span>"

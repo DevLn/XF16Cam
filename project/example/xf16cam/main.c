@@ -416,6 +416,7 @@ static int xf16cam_send_all(int fd, const void *data, uint32_t len)
 
 /* Still-mode acquisition leaves the returned buffer immutable until the next
  * call. Video mode rotates immediately and can overwrite a slow socket send. */
+__xip_text
 static int xf16cam_capture_jpeg(CAMERA_JpegBuffInfo *info, uint8_t **jpeg,
 				uint32_t *jpeg_len)
 {
@@ -483,6 +484,7 @@ static void xf16cam_mjpeg_task(void *arg)
 	OS_ThreadDelete(&g_mjpeg_thread);
 }
 
+__xip_text
 int xf16cam_mjpeg_start(int fd)
 {
 	int timeout = XF16CAM_RTSP_IO_TIMEOUT_MS;

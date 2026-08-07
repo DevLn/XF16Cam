@@ -9,6 +9,5 @@ void xf16cam_board_prepare_sleep(void);
 int xf16cam_board_mode_button_pressed(void);
 int xf16cam_board_reset_button_pressed(void);
 uint32_t xf16cam_board_stack_min_free(void);
-uint32_t xf16cam_board_uptime_seconds(void);
 
 #endif
