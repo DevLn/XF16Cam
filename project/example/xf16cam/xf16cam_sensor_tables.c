@@ -229,3 +229,17 @@ __xip_rodata const uint8_t xf16cam_sp0828_table[] = {
 	0xfd, 0x00, 0x31, 0x10, 0x32, 0x15, 0x34, 0x66, 0x35, 0x40, 0x1b, 0x07,
 	0xff, 0xff
 };
+
+#define XF16CAM_ASSERT_TABLE(table, expected_size) \
+	_Static_assert(sizeof(table) == (expected_size), #table " size changed"); \
+	_Static_assert(sizeof(table) % 2 == 0, #table " must contain register/value pairs")
+
+XF16CAM_ASSERT_TABLE(gc0328c_init_reg_tbl, XF16CAM_GC0328_TABLE_SIZE);
+XF16CAM_ASSERT_TABLE(gc0328c_post_init_reg_tbl,
+		       XF16CAM_GC0328_POST_TABLE_SIZE);
+XF16CAM_ASSERT_TABLE(xf16cam_gc0308_table, XF16CAM_GC0308_TABLE_SIZE);
+XF16CAM_ASSERT_TABLE(xf16cam_hi704_table, XF16CAM_HI704_TABLE_SIZE);
+XF16CAM_ASSERT_TABLE(xf16cam_sp0a20_table, XF16CAM_SP0A20_TABLE_SIZE);
+XF16CAM_ASSERT_TABLE(xf16cam_sp0828_table, XF16CAM_SP0828_TABLE_SIZE);
+
+#undef XF16CAM_ASSERT_TABLE

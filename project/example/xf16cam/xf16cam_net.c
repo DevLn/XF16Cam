@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "compiler.h"
 #include "kernel/os/os.h"
 #include "common/framework/net_ctrl.h"
 #include "lwip/inet.h"
@@ -14,6 +15,7 @@
 
 static XF16CamWifiMode g_active_mode = XF16CAM_WIFI_AP;
 
+__xip_text
 static int xf16cam_net_wait(uint32_t timeout_ms)
 {
 	uint32_t elapsed = 0;
@@ -27,6 +29,7 @@ static int xf16cam_net_wait(uint32_t timeout_ms)
 	return 0;
 }
 
+__xip_text
 static int xf16cam_net_start_ap(void)
 {
 	ip_addr_t ip;
@@ -61,6 +64,7 @@ static int xf16cam_net_start_ap(void)
 	return 0;
 }
 
+__xip_text
 static int xf16cam_net_start_sta(const XF16CamConfig *config)
 {
 	printf("xf16cam Wi-Fi: starting STA ssid=%s\n", config->ssid);
@@ -79,6 +83,7 @@ static int xf16cam_net_start_sta(const XF16CamConfig *config)
 	return 0;
 }
 
+__xip_text
 int xf16cam_net_start(const XF16CamConfig *config)
 {
 	if (config->wifi_mode == XF16CAM_WIFI_STA && config->ssid[0] != '\0' &&

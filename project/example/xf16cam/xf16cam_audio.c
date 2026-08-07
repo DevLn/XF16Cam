@@ -8,6 +8,7 @@
 #include "lwip/sockets.h"
 
 #include "xf16cam_audio.h"
+#include "xf16cam_config.h"
 
 #define XF16CAM_AUDIO_RATE          (8000)
 #define XF16CAM_AUDIO_RING_PACKETS  (8)
@@ -27,6 +28,7 @@ static XF16CamAudioPacket g_audio_ring[XF16CAM_AUDIO_RING_PACKETS];
 static volatile uint32_t g_audio_packets;
 static XF16CamAudioInfo g_audio_info;
 static volatile int g_audio_http_active;
+static volatile int g_audio_update_quiesced = 1;
 
 static int xf16cam_audio_send_all(int fd, const void *data, uint32_t length)
 {
@@ -82,10 +84,12 @@ static void xf16cam_audio_task(void *arg)
 	                      AUDIO_IN_DEV_AMIC, XF16CAM_AUDIO_MIC_LEVEL);
 	if (snd_pcm_open(AUDIO_SND_CARD_DEFAULT, PCM_IN, &config) != 0) {
 		printf("xf16cam audio: AMIC open failed\n");
+		g_audio_update_quiesced = 1;
 		OS_ThreadDelete(&g_audio_thread);
 		return;
 	}
 	g_audio_info.active = 1;
+	g_audio_update_quiesced = 0;
 	printf("xf16cam audio: AMIC 8000 Hz mono S16, PCMU packets=20 ms gain_level=%u\n",
 	       (unsigned int)XF16CAM_AUDIO_MIC_LEVEL);
 	while (1) {
@@ -95,8 +99,26 @@ static void xf16cam_audio_task(void *arg)
 		uint16_t peak = 0;
 		int i;
 
+		if (xf16cam_update_active()) {
+			snd_pcm_close(AUDIO_SND_CARD_DEFAULT, PCM_IN);
+			g_audio_info.active = 0;
+			g_audio_update_quiesced = 1;
+			while (xf16cam_update_active())
+				OS_MSleep(20);
+			g_audio_update_quiesced = 0;
+			if (snd_pcm_open(AUDIO_SND_CARD_DEFAULT, PCM_IN, &config) != 0) {
+				printf("xf16cam audio: AMIC reopen failed\n");
+				g_audio_update_quiesced = 1;
+				OS_ThreadDelete(&g_audio_thread);
+				return;
+			}
+			g_audio_info.active = 1;
+			continue;
+		}
 		if (snd_pcm_read(AUDIO_SND_CARD_DEFAULT, pcm, sizeof(pcm)) != sizeof(pcm)) {
 			g_audio_info.read_errors++;
+			/* Avoid monopolising the CPU if the input device fails immediately. */
+			OS_MSleep(20);
 			continue;
 		}
 		for (i = 0; i < XF16CAM_AUDIO_SAMPLES_PER_PACKET; ++i) {
@@ -121,8 +143,13 @@ int xf16cam_audio_start(void)
 	memset(&g_audio_info, 0, sizeof(g_audio_info));
 	memset(g_audio_ring, 0, sizeof(g_audio_ring));
 	g_audio_packets = 0;
-	return OS_ThreadCreate(&g_audio_thread, "xf16cam-audio", xf16cam_audio_task, NULL,
-	                       OS_THREAD_PRIO_APP, XF16CAM_AUDIO_STACK_SIZE) == OS_OK ? 0 : -1;
+	g_audio_update_quiesced = 0;
+	if (OS_ThreadCreate(&g_audio_thread, "xf16cam-audio", xf16cam_audio_task, NULL,
+	                    OS_THREAD_PRIO_APP, XF16CAM_AUDIO_STACK_SIZE) != OS_OK) {
+		g_audio_update_quiesced = 1;
+		return -1;
+	}
+	return 0;
 }
 
 static void xf16cam_audio_http_task(void *arg)
@@ -137,7 +164,7 @@ static void xf16cam_audio_http_task(void *arg)
 
 	if (xf16cam_audio_send_all(fd, header, sizeof(header) - 1) == 0) {
 		printf("xf16cam WEB audio: PCMU/8000 client connected\n");
-		while (1) {
+		while (!xf16cam_update_active()) {
 			int ready = xf16cam_audio_read(&cursor, pcmu, &timestamp);
 			(void)timestamp;
 			if (ready > 0) {
@@ -156,8 +183,11 @@ static void xf16cam_audio_http_task(void *arg)
 
 int xf16cam_audio_http_start(int fd)
 {
-	if (!g_audio_info.active || g_audio_http_active)
+	int timeout = 2000;
+
+	if (xf16cam_update_active() || !g_audio_info.active || g_audio_http_active)
 		return -1;
+	setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 	g_audio_http_active = 1;
 	if (OS_ThreadCreate(&g_audio_http_thread, "xf16cam-web-audio", xf16cam_audio_http_task,
 	                    (void *)(intptr_t)fd, OS_THREAD_PRIO_APP,
@@ -166,6 +196,11 @@ int xf16cam_audio_http_start(int fd)
 		return -1;
 	}
 	return 0;
+}
+
+int xf16cam_audio_update_ready(void)
+{
+	return g_audio_update_quiesced && !g_audio_http_active;
 }
 
 const XF16CamAudioInfo *xf16cam_audio_info(void)

@@ -15,6 +15,7 @@ typedef struct {
 
 int xf16cam_audio_start(void);
 int xf16cam_audio_http_start(int fd);
+int xf16cam_audio_update_ready(void);
 const XF16CamAudioInfo *xf16cam_audio_info(void);
 uint32_t xf16cam_audio_cursor(void);
 int xf16cam_audio_read(uint32_t *cursor, uint8_t *pcmu, uint32_t *timestamp);

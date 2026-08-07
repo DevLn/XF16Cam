@@ -102,6 +102,11 @@ static void xf16cam_cmd_wifi(char *args)
 		xf16cam_cmd_response(2, 1);
 		return;
 	}
+	if (xf16cam_update_begin() != 0) {
+		printf("wifi config saved; reboot deferred because an update is active\n");
+		xf16cam_cmd_response(3, 1);
+		return;
+	}
 
 	printf("wifi config saved; rebooting\n");
 	xf16cam_cmd_response(0, 0);
@@ -118,7 +123,10 @@ void main_cmd_exec(char *cmd)
 	if (name == NULL) {
 		console_write((uint8_t *)"$ ", 2);
 	} else if (strcmp(name, "upgrade") == 0 && xf16cam_cmd_arg(&cursor) == NULL) {
-		xf16cam_cmd_reboot(PRCM_CPUA_BOOT_FROM_SYS_UPDATE);
+		if (xf16cam_update_begin() != 0)
+			xf16cam_cmd_response(3, 1);
+		else
+			xf16cam_cmd_reboot(PRCM_CPUA_BOOT_FROM_SYS_UPDATE);
 	} else if (strcmp(name, "wifi") == 0) {
 		xf16cam_cmd_wifi(cursor);
 	} else {

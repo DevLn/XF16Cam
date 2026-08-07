@@ -36,6 +36,10 @@ int xf16cam_board_reset_button_pressed(void)
 
 static void xf16cam_board_reboot(void)
 {
+	if (xf16cam_update_begin() != 0) {
+		printf("xf16cam reboot deferred: firmware update is active\n");
+		return;
+	}
 	OS_MSleep(250);
 	HAL_PRCM_SetCPUABootFlag(PRCM_CPUA_BOOT_FROM_COLD_RESET);
 	HAL_WDG_Reboot();

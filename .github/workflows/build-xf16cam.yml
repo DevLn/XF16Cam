@@ -21,6 +21,16 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Test RTSP request parser
+        shell: bash
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror \
+            -Iinclude -Iproject/example/xf16cam \
+            tests/xf16cam/test_rtsp_parser.c \
+            project/example/xf16cam/xf16cam_rtsp_parser.c \
+            -o /tmp/xf16cam-rtsp-parser-test
+          /tmp/xf16cam-rtsp-parser-test
+
       - name: Install Arm GNU Toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
         with:
@@ -38,14 +48,27 @@ jobs:
         shell: bash
         run: |
           make -C project/example/xf16cam/gcc \
-            CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" \
-            -j"$(nproc)" image
+            CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" image
 
       - name: Build OTA image
         shell: bash
         run: |
           make -C project/example/xf16cam/gcc \
             CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" image_xz
+
+      - name: Check 1 MiB flash budget
+        shell: bash
+        run: |
+          mkdir -p dist
+          python3 tools/xf16cam/check_image_budget.py \
+            --config project/example/xf16cam/image/xr872/image_auto_cal.cfg \
+            --image-dir project/example/xf16cam/image/xr872 \
+            | tee dist/image-budget.txt
+          {
+            echo '```text'
+            cat dist/image-budget.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Package flash image
         shell: bash

@@ -117,6 +117,7 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 
 static const XF16CamSensor *g_selected;
 
+__xip_text
 static void xf16cam_sensor_control(const SENSOR_ConfigParam *cfg, GPIO_PinState state)
 {
 	GPIO_InitParam param;
@@ -129,6 +130,7 @@ static void xf16cam_sensor_control(const SENSOR_ConfigParam *cfg, GPIO_PinState 
 	OS_MSleep(XF16CAM_SENSOR_SETTLE_MS);
 }
 
+__xip_text
 static HAL_Status xf16cam_sccb_init(I2C_ID bus)
 {
 	I2C_InitParam param;
@@ -142,6 +144,7 @@ static HAL_Status xf16cam_sccb_init(I2C_ID bus)
 	return status;
 }
 
+__xip_text
 static void xf16cam_sensor_power_cycle(const SENSOR_ConfigParam *cfg)
 {
 	HAL_GPIO_WritePin(cfg->pwcfg.Pwdn_Port, cfg->pwcfg.Pwdn_Pin, GPIO_PIN_LOW);
@@ -150,6 +153,7 @@ static void xf16cam_sensor_power_cycle(const SENSOR_ConfigParam *cfg)
 	OS_MSleep(10);
 }
 
+__xip_text
 static int xf16cam_sensor_probe(I2C_ID bus, const XF16CamSensor *sensor,
 				uint8_t *chip_id)
 {
@@ -166,6 +170,7 @@ static int xf16cam_sensor_probe(I2C_ID bus, const XF16CamSensor *sensor,
 	return value == sensor->id_value;
 }
 
+__xip_text
 static HAL_Status xf16cam_sensor_write_table(I2C_ID bus, const uint8_t *table,
 					     uint16_t size)
 {
@@ -207,6 +212,7 @@ static HAL_Status xf16cam_sensor_write_table(I2C_ID bus, const uint8_t *table,
 	return HAL_OK;
 }
 
+__xip_text
 static HAL_Status xf16cam_sensor_load_table(SENSOR_ConfigParam *cfg)
 {
 	I2C_ID bus = (I2C_ID)cfg->i2c_id;
@@ -240,6 +246,7 @@ static HAL_Status xf16cam_sensor_load_table(SENSOR_ConfigParam *cfg)
 	return HAL_OK;
 }
 
+__xip_text
 HAL_Status xf16cam_sensor_init(SENSOR_ConfigParam *cfg)
 {
 	static const GPIO_PinState control_states[] = { GPIO_PIN_HIGH, GPIO_PIN_LOW };
@@ -278,6 +285,7 @@ HAL_Status xf16cam_sensor_init(SENSOR_ConfigParam *cfg)
 	return HAL_ERROR;
 }
 
+__xip_text
 void xf16cam_sensor_deinit(SENSOR_ConfigParam *cfg)
 {
 	if (cfg) {
@@ -290,6 +298,7 @@ void xf16cam_sensor_deinit(SENSOR_ConfigParam *cfg)
 	g_selected = NULL;
 }
 
+__xip_text
 int xf16cam_sensor_configure_camera(uint16_t configured_width,
 				    uint16_t configured_height)
 {
@@ -299,7 +308,9 @@ int xf16cam_sensor_configure_camera(uint16_t configured_width,
 	if (!g_selected)
 		return -1;
 	if (g_selected->input_width == configured_width &&
-	    g_selected->input_height == configured_height)
+	    g_selected->input_height == configured_height &&
+	    g_selected->output_width == configured_width &&
+	    g_selected->output_height == configured_height)
 		return 0;
 
 	input.width = g_selected->input_width;

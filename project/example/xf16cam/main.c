@@ -1,11 +1,13 @@
 ﻿/*
  * Copyright (C) 2017 XRADIO TECHNOLOGY CO., LTD.
  */
+#include <errno.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "compiler.h"
 #include "kernel/os/os.h"
 #include "common/framework/platform_init.h"
 #include "common/framework/net_ctrl.h"
@@ -25,13 +27,14 @@
 #include "xf16cam_http.h"
 #include "xf16cam_media.h"
 #include "xf16cam_net.h"
+#include "xf16cam_rtsp_parser.h"
 #include "xf16cam_sensor.h"
 #include "xf16cam_storage.h"
 #include "xf16cam_version.h"
 
 #define JPEG_ONLINE_EN           (1)
 #define JPEG_BUFFER_COUNT        (2)
-#define JPEG_SRAM_SIZE           (106 * 1024)
+#define JPEG_SRAM_SIZE           (104 * 1024)
 #define JPEG_MPART_EN            (0)
 #define JPEG_BUFF_SIZE           (50 * 1024)
 #define JPEG_IMAGE_WIDTH         (320)
@@ -40,6 +43,12 @@
 #define XF16CAM_RTP_MTU          (1300)
 #define XF16CAM_RTP_SSRC         (0x58463136UL)
 #define XF16CAM_RTP_AUDIO_SSRC   (0x58463137UL)
+#define XF16CAM_RTSP_HANDSHAKE_MS (10000U)
+#define XF16CAM_RTSP_IO_TIMEOUT_MS (2000)
+
+_Static_assert(JPEG_SRAM_SIZE >=
+	       JPEG_BUFFER_COUNT * (JPEG_BUFF_SIZE + CAMERA_JPEG_HEADER_LEN + 1023U),
+	       "JPEG arena cannot hold aligned buffers");
 
 #define XF16_SENSOR_I2C_ID       I2C0_ID
 #define XF16_CTRL_PORT           GPIO_PORT_A
@@ -58,11 +67,14 @@
 static void xf16_release_camera_wakeup_hold(void);
 static void xf16_camera_ctrl_prehold_low(void);
 static void xf16_factory_pa23_prepare(void);
+static void xf16_board_camera_power_down(void);
 
 static uint8_t *gmemaddr;
 static CAMERA_Mgmt mem_mgmt;
+static int g_camera_rail_on;
 static OS_Thread_t g_mjpeg_thread;
 static volatile int g_mjpeg_active;
+static volatile int g_rtsp_active;
 
 static CAMERA_Cfg camera_cfg = {
 	.jpeg_cfg.jpeg_en = 1,
@@ -87,6 +99,7 @@ static CAMERA_Cfg camera_cfg = {
 };
 
 /* XF16 board-specific camera rail and control-pin preparation. */
+__xip_text
 static void xf16_release_camera_wakeup_hold(void)
 {
 	uint32_t mask = HAL_BIT(4) | HAL_BIT(5);
@@ -94,6 +107,7 @@ static void xf16_release_camera_wakeup_hold(void)
 	HAL_PRCM_WakeupIODisableCfgHold(mask);
 }
 
+__xip_text
 static void xf16_camera_ctrl_prehold_low(void)
 {
 	GPIO_InitParam param;
@@ -106,6 +120,7 @@ static void xf16_camera_ctrl_prehold_low(void)
 	OS_MSleep(20);
 }
 
+__xip_text
 static void xf16_factory_pa23_prepare(void)
 {
 	GPIO_InitParam param;
@@ -117,8 +132,10 @@ static void xf16_factory_pa23_prepare(void)
 	HAL_GPIO_WritePin(XF16_FACTORY_PA23_PORT, XF16_FACTORY_PA23_PIN, GPIO_PIN_LOW);
 	OS_MSleep(XF16_FACTORY_PA23_PULSE_MS);
 	HAL_GPIO_WritePin(XF16_FACTORY_PA23_PORT, XF16_FACTORY_PA23_PIN, GPIO_PIN_HIGH);
+	g_camera_rail_on = 1;
 }
 
+__xip_text
 static void xf16_board_camera_power_prepare(void)
 {
 	HAL_PRCM_SelectEXTLDOVolt(PRCM_EXT_LDO_3V3);
@@ -130,7 +147,18 @@ static void xf16_board_camera_power_prepare(void)
 	xf16_camera_ctrl_prehold_low();
 }
 
-/* JPEG demo buffer, capture, and SD-file handling. */
+__xip_text
+static void xf16_board_camera_power_down(void)
+{
+	if (!g_camera_rail_on)
+		return;
+	HAL_GPIO_WritePin(XF16_FACTORY_PA23_PORT, XF16_FACTORY_PA23_PIN, GPIO_PIN_LOW);
+	g_camera_rail_on = 0;
+	printf("xf16cam camera rail: PA23 off\n");
+}
+
+/* Fixed, bounded JPEG capture arena. */
+__xip_text
 static int camera_mem_create(CAMERA_JpegCfg *jpeg_cfg, CAMERA_Mgmt *mgmt)
 {
 	uint8_t *addr;
@@ -148,8 +176,9 @@ static int camera_mem_create(CAMERA_JpegCfg *jpeg_cfg, CAMERA_Mgmt *mgmt)
 	end_addr = addr + JPEG_SRAM_SIZE;
 	printf("malloc addr: %p -> %p\n", addr, end_addr);
 
-	/* Online JPEG mode does not consume a YUV framebuffer. Keep two encoded
-	 * frames so the network task has one full frame of overwrite tolerance. */
+	/* Online JPEG mode does not consume a YUV framebuffer. The SDK encoder is
+	 * configured with two aligned output buffers; still capture owns each
+	 * returned frame until the next capture call. */
 	mgmt->yuv_buf.addr = NULL;
 	mgmt->yuv_buf.size = 0;
 	cursor = addr;
@@ -171,6 +200,7 @@ static int camera_mem_create(CAMERA_JpegCfg *jpeg_cfg, CAMERA_Mgmt *mgmt)
 	return 0;
 }
 
+__xip_text
 static void camera_mem_destroy(void)
 {
 	if (gmemaddr) {
@@ -179,12 +209,15 @@ static void camera_mem_destroy(void)
 	}
 }
 
+__xip_text
 static void camera_deinit(void)
 {
 	HAL_CAMERA_DeInit();
 	camera_mem_destroy();
+	xf16_board_camera_power_down();
 }
 
+__xip_text
 static int camera_init(void)
 {
 	memset(&mem_mgmt, 0, sizeof(mem_mgmt));
@@ -306,6 +339,24 @@ static int xf16cam_send_all(int fd, const void *data, uint32_t len)
 	return 0;
 }
 
+/* Still-mode acquisition leaves the returned buffer immutable until the next
+ * call. Video mode rotates immediately and can overwrite a slow socket send. */
+static int xf16cam_capture_jpeg(CAMERA_JpegBuffInfo *info, uint8_t **jpeg,
+				uint32_t *jpeg_len)
+{
+	if (HAL_CAMERA_CaptureImage(CAMERA_OUT_JPEG, info, 1) != 0)
+		return -1;
+	if (info->buff_index >= JPEG_BUFFER_COUNT || info->size == 0 ||
+	    info->size > mem_mgmt.jpeg_buf[info->buff_index].size) {
+		printf("xf16cam invalid capture metadata: index=%u len=%lu\n",
+		       info->buff_index, (unsigned long)info->size);
+		return 1;
+	}
+	*jpeg = mem_mgmt.jpeg_buf[info->buff_index].addr - CAMERA_JPEG_HEADER_LEN;
+	*jpeg_len = info->size + CAMERA_JPEG_HEADER_LEN;
+	return 0;
+}
+
 static int xf16cam_mjpeg_stream(int fd)
 {
 	static const char response[] =
@@ -314,35 +365,34 @@ static int xf16cam_mjpeg_stream(int fd)
 	static const uint8_t eoi[] = { 0xff, 0xd9 };
 	char part[112];
 
-	if (xf16cam_send_all(fd, response, sizeof(response) - 1) != 0 ||
-	    HAL_CAMERA_CaptureVideoStart() != 0)
+	if (xf16cam_send_all(fd, response, sizeof(response) - 1) != 0)
 		return -1;
 	printf("xf16cam WEB PLAY: multipart MJPEG\n");
-	while (1) {
+	while (!xf16cam_update_active()) {
 		CAMERA_JpegBuffInfo info;
 		uint8_t *jpeg;
 		uint32_t jpeg_len;
+		uint32_t eoi_len;
+		int capture;
 		int length;
 
-		if (HAL_CAMERA_CaptureVideoData(&info) != 0)
+		capture = xf16cam_capture_jpeg(&info, &jpeg, &jpeg_len);
+		if (capture < 0)
 			break;
-		if (info.buff_index >= JPEG_BUFFER_COUNT)
+		if (capture > 0)
 			continue;
-		jpeg = mem_mgmt.jpeg_buf[info.buff_index].addr - CAMERA_JPEG_HEADER_LEN;
-		jpeg_len = info.size + CAMERA_JPEG_HEADER_LEN;
-		if (jpeg_len > JPEG_BUFF_SIZE + CAMERA_JPEG_HEADER_LEN)
-			continue;
+		eoi_len = jpeg_len >= 2 && jpeg[jpeg_len - 2] == 0xff &&
+		          jpeg[jpeg_len - 1] == 0xd9 ? 0 : sizeof(eoi);
 		length = snprintf(part, sizeof(part),
 		                  "--xf16frame\r\nContent-Type: image/jpeg\r\nContent-Length: %lu\r\n\r\n",
-		                  (unsigned long)(jpeg_len + sizeof(eoi)));
+		                  (unsigned long)(jpeg_len + eoi_len));
 		if (length <= 0 || length >= (int)sizeof(part) ||
 		    xf16cam_send_all(fd, part, length) != 0 ||
 		    xf16cam_send_all(fd, jpeg, jpeg_len) != 0 ||
-		    xf16cam_send_all(fd, eoi, sizeof(eoi)) != 0 ||
+		    (eoi_len != 0 && xf16cam_send_all(fd, eoi, eoi_len) != 0) ||
 		    xf16cam_send_all(fd, "\r\n", 2) != 0)
 			break;
 	}
-	HAL_CAMERA_CaptureVideoStop();
 	printf("xf16cam WEB client stopped\n");
 	return 0;
 }
@@ -359,8 +409,13 @@ static void xf16cam_mjpeg_task(void *arg)
 
 int xf16cam_mjpeg_start(int fd)
 {
+	int timeout = XF16CAM_RTSP_IO_TIMEOUT_MS;
+
+	if (xf16cam_update_active())
+		return -1;
 	if (g_mjpeg_active)
 		return -1;
+	setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 	g_mjpeg_active = 1;
 	if (OS_ThreadCreate(&g_mjpeg_thread, "xf16cam-mjpeg", xf16cam_mjpeg_task,
 	                    (void *)(intptr_t)fd, OS_THREAD_PRIO_APP, 2 * 1024) != OS_OK) {
@@ -370,8 +425,17 @@ int xf16cam_mjpeg_start(int fd)
 	return 0;
 }
 
+typedef struct {
+	uint8_t video_channel;
+	uint8_t audio_channel;
+	uint8_t audio_available;
+	uint8_t video_setup;
+	uint8_t audio_setup;
+} XF16CamRtspSession;
+
 static int xf16cam_send_rtp_jpeg(int fd, const XF16CamJpeg *jpg,
-				 uint16_t *sequence, uint32_t timestamp)
+				 uint16_t *sequence, uint32_t timestamp,
+				 uint8_t channel)
 {
 	uint32_t offset = 0;
 	while (offset < jpg->scan_len) {
@@ -386,7 +450,7 @@ static int xf16cam_send_rtp_jpeg(int fd, const XF16CamJpeg *jpg,
 			payload = XF16CAM_RTP_MTU;
 		last = (offset + payload == jpg->scan_len);
 		interleaved_len = (uint16_t)(12 + 8 + extra + payload);
-		header[0] = '$'; header[1] = 0;
+		header[0] = '$'; header[1] = channel;
 		header[2] = (uint8_t)(interleaved_len >> 8);
 		header[3] = (uint8_t)interleaved_len;
 		header[4] = 0x80; header[5] = (uint8_t)(26 | (last ? 0x80 : 0));
@@ -422,7 +486,8 @@ static int xf16cam_send_rtp_jpeg(int fd, const XF16CamJpeg *jpg,
 	return 0;
 }
 
-static int xf16cam_send_rtp_audio(int fd, uint16_t *sequence, uint32_t *cursor)
+static int xf16cam_send_rtp_audio(int fd, uint16_t *sequence, uint32_t *cursor,
+				  uint8_t channel)
 {
 	uint8_t packet[4 + 12 + XF16CAM_AUDIO_SAMPLES_PER_PACKET];
 	uint32_t timestamp;
@@ -430,7 +495,7 @@ static int xf16cam_send_rtp_audio(int fd, uint16_t *sequence, uint32_t *cursor)
 	while (xf16cam_audio_read(cursor, packet + 16, &timestamp) > 0) {
 		uint16_t interleaved_len = 12 + XF16CAM_AUDIO_SAMPLES_PER_PACKET;
 
-		packet[0] = '$'; packet[1] = 2;
+		packet[0] = '$'; packet[1] = channel;
 		packet[2] = (uint8_t)(interleaved_len >> 8);
 		packet[3] = (uint8_t)interleaved_len;
 		packet[4] = 0x80; packet[5] = 0;
@@ -448,16 +513,44 @@ static int xf16cam_send_rtp_audio(int fd, uint16_t *sequence, uint32_t *cursor)
 	return 0;
 }
 
+__xip_text
 static int xf16cam_cseq(const char *request)
 {
 	const char *p = strstr(request, "CSeq:");
 	return p ? atoi(p + 5) : 0;
 }
 
+__xip_text
+static int xf16cam_rtsp_channels(const char *request, uint8_t fallback,
+				 uint8_t *channel)
+{
+	const char *value = strstr(request, "interleaved=");
+	int first;
+	int second;
+
+	if (value == NULL) {
+		*channel = fallback;
+		return 0;
+	}
+	if (sscanf(value + sizeof("interleaved=") - 1, "%d-%d", &first, &second) != 2 ||
+	    first < 0 || first > 254 || second != first + 1)
+		return -1;
+	*channel = (uint8_t)first;
+	return 0;
+}
+
+__xip_text
+static int xf16cam_rtsp_channels_overlap(uint8_t first, uint8_t second)
+{
+	return first <= (unsigned int)second + 1U && second <= (unsigned int)first + 1U;
+}
+
 /* Returns 1 for PLAY, 2 for TEARDOWN, and 0 for other requests. */
+__xip_text
 static int xf16cam_rtsp_reply(int fd, const char *request, const char *ip,
 			      uint16_t video_sequence, uint32_t video_timestamp,
-			      uint16_t audio_sequence, uint32_t audio_timestamp)
+			      uint16_t audio_sequence, uint32_t audio_timestamp,
+			      XF16CamRtspSession *session)
 {
 	char response[768];
 	char sdp[256];
@@ -472,153 +565,281 @@ static int xf16cam_rtsp_reply(int fd, const char *request, const char *ip,
 		int sdp_len = snprintf(sdp, sizeof(sdp),
 			"v=0\r\no=- 0 0 IN IP4 %s\r\ns=XF16 %s\r\nc=IN IP4 %s\r\nt=0 0\r\n"
 			"m=video 0 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=control:track1\r\n"
-			"m=audio 0 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000/1\r\na=control:track2\r\n",
-			ip, xf16cam_sensor_name(), ip);
+			"%s",
+			ip, xf16cam_sensor_name(), ip,
+			session->audio_available ?
+			"m=audio 0 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000/1\r\na=control:track2\r\n" : "");
 		n = snprintf(response, sizeof(response),
 			     "RTSP/1.0 200 OK\r\nCSeq: %d\r\nContent-Base: rtsp://%s:%u/stream/\r\n"
 			     "Content-Type: application/sdp\r\nContent-Length: %d\r\n\r\n%s",
 			     cseq, ip, XF16CAM_RTSP_PORT, sdp_len, sdp);
+	} else if (!strncmp(request, "SETUP ", 6) &&
+	           (strstr(request, "Transport:") == NULL ||
+	            strstr(request, "RTP/AVP/TCP") == NULL)) {
+		n = snprintf(response, sizeof(response),
+		             "RTSP/1.0 461 Unsupported Transport\r\nCSeq: %d\r\n\r\n", cseq);
 	} else if (!strncmp(request, "SETUP ", 6)) {
+		int video = strstr(request, "track1") != NULL;
 		int audio = strstr(request, "track2") != NULL;
-		n = snprintf(response, sizeof(response),
-			     "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\n"
-			     "Transport: RTP/AVP/TCP;unicast;interleaved=%s\r\n\r\n",
-			     cseq, audio ? "2-3" : "0-1");
+		uint8_t *channel = audio ? &session->audio_channel : &session->video_channel;
+		uint8_t requested_channel;
+		if (video == audio || (audio && !session->audio_available) ||
+		    xf16cam_rtsp_channels(request, audio ? 2 : 0, &requested_channel) != 0 ||
+		    (audio && session->video_setup &&
+		     xf16cam_rtsp_channels_overlap(requested_channel, session->video_channel)) ||
+		    (video && session->audio_setup &&
+		     xf16cam_rtsp_channels_overlap(requested_channel, session->audio_channel))) {
+			n = snprintf(response, sizeof(response),
+			             "RTSP/1.0 400 Bad Request\r\nCSeq: %d\r\n\r\n", cseq);
+		} else {
+			*channel = requested_channel;
+			if (audio)
+				session->audio_setup = 1;
+			else
+				session->video_setup = 1;
+			n = snprintf(response, sizeof(response),
+			             "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\n"
+			             "Transport: RTP/AVP/TCP;unicast;interleaved=%u-%u\r\n\r\n",
+			             cseq, (unsigned int)*channel, (unsigned int)*channel + 1U);
+		}
 	} else if (!strncmp(request, "PLAY ", 5)) {
-		n = snprintf(response, sizeof(response),
-			     "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\nRange: npt=0.000-\r\n"
-			     "RTP-Info: url=rtsp://%s:%u/stream/track1;seq=%u;rtptime=%lu,"
-			     "url=rtsp://%s:%u/stream/track2;seq=%u;rtptime=%lu\r\n\r\n",
-			     cseq, ip, XF16CAM_RTSP_PORT, video_sequence, (unsigned long)video_timestamp,
-			     ip, XF16CAM_RTSP_PORT, audio_sequence, (unsigned long)audio_timestamp);
+		if (!session->video_setup) {
+			n = snprintf(response, sizeof(response),
+			             "RTSP/1.0 455 Method Not Valid in This State\r\nCSeq: %d\r\n\r\n",
+			             cseq);
+		} else if (session->audio_setup) {
+			n = snprintf(response, sizeof(response),
+			             "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\nRange: npt=0.000-\r\n"
+			             "RTP-Info: url=rtsp://%s:%u/stream/track1;seq=%u;rtptime=%lu,"
+			             "url=rtsp://%s:%u/stream/track2;seq=%u;rtptime=%lu\r\n\r\n",
+			             cseq, ip, XF16CAM_RTSP_PORT, video_sequence, (unsigned long)video_timestamp,
+			             ip, XF16CAM_RTSP_PORT, audio_sequence, (unsigned long)audio_timestamp);
+		} else {
+			n = snprintf(response, sizeof(response),
+			             "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\nRange: npt=0.000-\r\n"
+			             "RTP-Info: url=rtsp://%s:%u/stream/track1;seq=%u;rtptime=%lu\r\n\r\n",
+			             cseq, ip, XF16CAM_RTSP_PORT, video_sequence,
+			             (unsigned long)video_timestamp);
+		}
 	} else if (!strncmp(request, "TEARDOWN ", 9)) {
 		n = snprintf(response, sizeof(response),
 			     "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\n\r\n", cseq);
 		if (n > 0)
 			xf16cam_send_all(fd, response, (uint32_t)n);
 		return 2;
-	} else {
+	} else if (!strncmp(request, "GET_PARAMETER ", 14)) {
 		n = snprintf(response, sizeof(response),
 			     "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\n\r\n", cseq);
+	} else {
+		n = snprintf(response, sizeof(response),
+		             "RTSP/1.0 405 Method Not Allowed\r\nCSeq: %d\r\n"
+		             "Allow: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER\r\n\r\n",
+		             cseq);
 	}
 	if (n <= 0 || n >= (int)sizeof(response) ||
 	    xf16cam_send_all(fd, response, (uint32_t)n) != 0)
 		return -1;
-	return !strncmp(request, "PLAY ", 5) ? 1 : 0;
+	return !strncmp(request, "PLAY ", 5) && session->video_setup ? 1 : 0;
+}
+
+__xip_text
+static int xf16cam_rtsp_receive(int fd, XF16CamRtspParser *parser,
+				const char **request, int nonblocking)
+{
+	size_t writable;
+	int ready = xf16cam_rtsp_parser_next(parser, request);
+	int received;
+
+	if (ready != 0)
+		return ready;
+	writable = xf16cam_rtsp_parser_writable(parser);
+	if (writable == 0)
+		return -1;
+	received = recv(fd, xf16cam_rtsp_parser_write_ptr(parser), writable,
+	                nonblocking ? MSG_DONTWAIT : 0);
+	if (received > 0) {
+		if (xf16cam_rtsp_parser_commit(parser, (size_t)received) != 0)
+			return -1;
+		return xf16cam_rtsp_parser_next(parser, request);
+	}
+	if (received == 0)
+		return -1;
+	if (errno == EAGAIN || errno == EWOULDBLOCK)
+		return 0;
+	return -1;
 }
 
 static int xf16cam_stream_client(int fd, const char *ip)
 {
-	char request[1024];
+	XF16CamRtspParser parser;
+	XF16CamRtspSession session = { 0, 2, 0, 0, 0 };
 	uint16_t sequence = 1;
 	uint16_t audio_sequence = 1;
 	uint32_t timestamp = OS_TicksToMSecs(OS_GetTicks()) * 90U;
 	uint32_t audio_cursor = xf16cam_audio_cursor();
 	uint32_t audio_timestamp = audio_cursor * XF16CAM_AUDIO_SAMPLES_PER_PACKET;
-	int timeout_ms = 50;
+	uint32_t handshake_start = OS_TicksToMSecs(OS_GetTicks());
+	int receive_timeout = 1000;
+	int send_timeout = XF16CAM_RTSP_IO_TIMEOUT_MS;
 	int playing = 0;
 
-	while (!playing) {
-		int n = recv(fd, request, sizeof(request) - 1, 0);
+	session.audio_available = xf16cam_audio_info()->active != 0;
+	xf16cam_rtsp_parser_init(&parser);
+	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &receive_timeout, sizeof(receive_timeout));
+	setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout));
+	while (!playing && !xf16cam_update_active()) {
+		const char *request;
 		int action;
-		if (n <= 0)
+		int ready;
+
+		if (OS_TicksToMSecs(OS_GetTicks()) - handshake_start >= XF16CAM_RTSP_HANDSHAKE_MS)
 			return -1;
-		request[n] = '\0';
+		ready = xf16cam_rtsp_receive(fd, &parser, &request, 0);
+		if (ready < 0)
+			return -1;
+		if (ready == 0)
+			continue;
 		if (!strncmp(request, "PLAY ", 5)) {
 			timestamp = OS_TicksToMSecs(OS_GetTicks()) * 90U;
 			audio_cursor = xf16cam_audio_cursor();
 			audio_timestamp = audio_cursor * XF16CAM_AUDIO_SAMPLES_PER_PACKET;
 		}
 		action = xf16cam_rtsp_reply(fd, request, ip, sequence, timestamp,
-		                              audio_sequence, audio_timestamp);
+		                              audio_sequence, audio_timestamp, &session);
+		xf16cam_rtsp_parser_consume(&parser);
 		if (action < 0 || action == 2)
 			return -1;
 		playing = action == 1;
 	}
-
-	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
-	if (HAL_CAMERA_CaptureVideoStart() != 0)
+	if (!playing)
 		return -1;
-	printf("xf16cam PLAY: RTP/JPEG + PCMU/8000 over RTSP TCP\n");
-	while (1) {
+
+	printf("xf16cam PLAY: RTP/JPEG%s over RTSP TCP\n",
+	       session.audio_setup ? " + PCMU/8000" : "");
+	while (!xf16cam_update_active()) {
 		CAMERA_JpegBuffInfo info;
 		XF16CamJpeg jpg;
 		uint8_t *jpeg;
 		uint32_t jpeg_len;
-		int n;
+		int capture;
 
-		if (HAL_CAMERA_CaptureVideoData(&info) != 0)
+		while (1) {
+			const char *request;
+			int action;
+			int ready = xf16cam_rtsp_receive(fd, &parser, &request, 1);
+
+			if (ready < 0)
+				goto stopped;
+			if (ready == 0)
+				break;
+			action = xf16cam_rtsp_reply(fd, request, ip, sequence, timestamp,
+			                              audio_sequence,
+			                              audio_cursor * XF16CAM_AUDIO_SAMPLES_PER_PACKET,
+			                              &session);
+			xf16cam_rtsp_parser_consume(&parser);
+			if (action < 0 || action == 2)
+				goto stopped;
+		}
+
+		capture = xf16cam_capture_jpeg(&info, &jpeg, &jpeg_len);
+		if (capture < 0)
 			break;
-		if (info.buff_index >= JPEG_BUFFER_COUNT)
+		if (capture > 0)
 			continue;
-		jpeg = mem_mgmt.jpeg_buf[info.buff_index].addr - CAMERA_JPEG_HEADER_LEN;
-		jpeg_len = info.size + CAMERA_JPEG_HEADER_LEN;
 		if (xf16cam_parse_jpeg(jpeg, jpeg_len, &jpg) != 0) {
 			printf("xf16cam invalid jpeg: index=%u len=%lu\n",
 			       info.buff_index, (unsigned long)jpeg_len);
 			continue;
 		}
-		if (xf16cam_send_rtp_audio(fd, &audio_sequence, &audio_cursor) != 0)
+		if (session.audio_setup &&
+		    xf16cam_send_rtp_audio(fd, &audio_sequence, &audio_cursor,
+		                             session.audio_channel) != 0)
 			break;
-		if (xf16cam_send_rtp_jpeg(fd, &jpg, &sequence, timestamp) != 0)
+		if (xf16cam_send_rtp_jpeg(fd, &jpg, &sequence, timestamp,
+		                            session.video_channel) != 0)
 			break;
 		timestamp = OS_TicksToMSecs(OS_GetTicks()) * 90U;
-		if (xf16cam_send_rtp_audio(fd, &audio_sequence, &audio_cursor) != 0)
+		if (session.audio_setup &&
+		    xf16cam_send_rtp_audio(fd, &audio_sequence, &audio_cursor,
+		                             session.audio_channel) != 0)
 			break;
-
-		n = recv(fd, request, sizeof(request) - 1, 0);
-		if (n == 0)
-			break;
-		if (n > 0 && request[0] != '$') {
-			int action;
-			request[n] = '\0';
-			action = xf16cam_rtsp_reply(fd, request, ip, sequence, timestamp,
-			                              audio_sequence,
-			                              audio_cursor * XF16CAM_AUDIO_SAMPLES_PER_PACKET);
-			if (action < 0 || action == 2)
-				break;
-		}
 	}
-	HAL_CAMERA_CaptureVideoStop();
+
+stopped:
 	printf("xf16cam client stopped\n");
 	return 0;
 }
 
-static void xf16cam_rtsp_server(void)
+__xip_text
+static int xf16cam_rtsp_listener_open(void)
 {
-	int server;
 	struct sockaddr_in addr;
-	const char *ip = xf16cam_net_ip();
+	int option = 1;
+	int server;
 
 	server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (server < 0) {
-		printf("xf16cam socket failed\n");
-		return;
-	}
+	if (server < 0)
+		return -1;
+	setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option));
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(XF16CAM_RTSP_PORT);
 	addr.sin_addr.s_addr = INADDR_ANY;
 	if (bind(server, (struct sockaddr *)&addr, sizeof(addr)) != 0 ||
 	    listen(server, 1) != 0) {
-		printf("xf16cam bind/listen failed\n");
 		closesocket(server);
-		return;
+		return -1;
 	}
+	return server;
+}
+
+static void xf16cam_rtsp_server(int server)
+{
+	char ip[16];
+
+	snprintf(ip, sizeof(ip), "%s", xf16cam_net_ip());
 	printf("xf16cam ready: rtsp://%s:%u/stream\n", ip, XF16CAM_RTSP_PORT);
 	while (1) {
 		int client = accept(server, NULL, NULL);
 		if (client < 0)
 			continue;
+		g_rtsp_active = 1;
+		if (xf16cam_update_active()) {
+			closesocket(client);
+			g_rtsp_active = 0;
+			continue;
+		}
 		printf("xf16cam RTSP client connected\n");
 		xf16cam_stream_client(client, ip);
 		closesocket(client);
+		g_rtsp_active = 0;
 	}
+}
+
+__xip_text
+int xf16cam_media_quiesce_for_update(uint32_t timeout_ms)
+{
+	uint32_t start = OS_TicksToMSecs(OS_GetTicks());
+
+	while (OS_TicksToMSecs(OS_GetTicks()) - start < timeout_ms) {
+		if (!g_mjpeg_active && !g_rtsp_active && xf16cam_audio_update_ready())
+			return 0;
+		OS_MSleep(10);
+	}
+	return -1;
+}
+
+static void __attribute__((noreturn)) xf16cam_idle(void)
+{
+	while (1)
+		OS_MSleep(10000);
 }
 
 int main(void)
 {
+	int board_ready;
 	int camera_ready;
+	int rtsp_server = -1;
 
 	platform_init();
 	printf("xf16cam version %s\n", XF16CAM_VERSION);
@@ -629,29 +850,47 @@ int main(void)
 	camera_ready = camera_init() == 0;
 	if (!camera_ready) {
 		camera_mem_destroy();
+		xf16_board_camera_power_down();
 		printf("xf16cam camera unavailable; continuing with management services\n");
 	}
 	if (xf16cam_audio_start() != 0)
 		printf("xf16cam audio: task start failed\n");
-	xf16cam_config_init();
-	xf16cam_board_init();
+	if (xf16cam_config_init() != 0)
+		printf("xf16cam config: persistence unavailable\n");
+	board_ready = xf16cam_board_init() == 0;
 	xf16cam_storage_init();
-	if (xf16cam_net_start(xf16cam_config_get()) != 0)
-		return -1;
-	xf16cam_http_start();
-	xf16cam_board_set_ready();
+	if (xf16cam_net_start(xf16cam_config_get()) != 0) {
+		printf("xf16cam network start failed; console recovery remains available\n");
+		if (camera_ready)
+			camera_deinit();
+		xf16cam_idle();
+	}
 	if (camera_ready && xf16cam_config_get()->media_mode == XF16CAM_MEDIA_RTSP) {
-		xf16cam_rtsp_server();
+		rtsp_server = xf16cam_rtsp_listener_open();
+		if (rtsp_server < 0)
+			printf("xf16cam RTSP listener failed; management remains available\n");
+	}
+	if (xf16cam_http_start() != 0) {
+		printf("xf16cam management unavailable; console recovery remains available\n");
+		if (rtsp_server >= 0)
+			closesocket(rtsp_server);
+		if (camera_ready)
+			camera_deinit();
+		xf16cam_idle();
+	}
+	if (board_ready)
+		xf16cam_board_set_ready();
+	if (rtsp_server < 0 && camera_ready &&
+	    xf16cam_config_get()->media_mode == XF16CAM_MEDIA_RTSP)
+		xf16cam_idle();
+	if (camera_ready && xf16cam_config_get()->media_mode == XF16CAM_MEDIA_RTSP) {
+		xf16cam_rtsp_server(rtsp_server);
 	} else if (camera_ready) {
 		printf("xf16cam browser video ready: http://%s/stream.mjpeg\n", xf16cam_net_ip());
-		while (1)
-			OS_MSleep(10000);
+		xf16cam_idle();
 	} else {
 		printf("xf16cam management ready without camera: http://%s/\n", xf16cam_net_ip());
-		while (1)
-			OS_MSleep(10000);
+		xf16cam_idle();
 	}
-	if (camera_ready)
-		camera_deinit();
-	return -1;
+	return 0;
 }

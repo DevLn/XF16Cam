@@ -14,14 +14,16 @@ single-client RTSP stream without PSRAM or an SD card.
 - Stream: `rtsp://<device-ip>:8554/stream`
 - The responsive web console has Live, Network, Storage, and System tabs, with
   a focal embedded MJPEG view that can switch exclusively with RTSP mode.
-- Browser MJPEG frames are terminated as standalone JPEG images; this avoids
-  decoder resynchronization flicker while leaving the RTP/JPEG path unchanged.
+- Browser MJPEG frames are terminated as standalone, immutable JPEG images;
+  both web and RTSP clients finish sending one frame before the next capture.
 - Device information reports the detected flash ID/capacity and known XF16 pin map.
 - PA15 short-press switches Web/RTSP mode; PA20 held for three seconds restores
   the setup AP. PA21 blinks during startup and stays on when services are ready.
 - An optional one-bit SD card can be mounted and inspected from the web page.
   The page reports total/free space and can explicitly format a card as FAT32.
 - Transport: RTP/JPEG (RFC 2435) interleaved over RTSP/TCP
+- RTSP input is framed across fragmented/coalesced TCP reads, rejects unsupported
+  transports, and applies bounded connection and send waits.
 - Image: 320 x 240, JPEG quality 60
 - Sensor probing and driver dispatch use a small descriptor registry and one
   register-table backend; adding a compatible sensor does not require changes
@@ -57,7 +59,9 @@ FFmpeg/ffplay use `-rtsp_transport tcp`.
 
 All sensors, including GC0328, use the same probe and retrying table loader;
 GC0328 retains its validated power-cycle, register-delay, and settle timings.
-The capture arena contains two 50 KiB JPEG buffers and no YUV framebuffer.
+The 104 KiB capture arena contains two aligned 50 KiB JPEG buffers and no YUV framebuffer.
+Frames are acquired one at a time so a slow network client cannot race the
+hardware encoder and observe a buffer while it is being overwritten.
 XF16Cam owns camera power, CSI/JPEG, and its media listeners; the SDK platform
 starts the underlying Wi-Fi/lwIP services. `PRJCONF_CONSOLE_EN` remains enabled
 for serial recovery and reflashing.
@@ -82,6 +86,7 @@ Ubuntu 22.04. Each run uploads an `xf16cam-xr872` artifact containing:
 - `xf16cam-xr872-v<version>-ota.img`: compressed image for the web updater
 - `SHA256SUMS`: image checksum
 - `size.txt`: linked application memory usage
+- `image-budget.txt`: app, XIP, OTA, and reserved-tail usage/headroom
 
 For a local Linux build with `arm-none-eabi-gcc` on `PATH`:
 
@@ -92,7 +97,7 @@ printf '%s\n' \
 chmod +x tools/mkimage
 make -C project/example/xf16cam/gcc \
   CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" \
-  -j"$(nproc)" image
+  image
 make -C project/example/xf16cam/gcc \
   CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" image_xz
 ```
@@ -105,7 +110,7 @@ The flashable result is
 
 - `0-32 KiB`: bootloader and reserved space
 - `32-86 KiB`: SRAM-loaded application
-- `86-560 KiB`: XIP application (about 83 KiB free at v0.11.1)
+- `86-560 KiB`: XIP application
 - `560-598 KiB`: WLAN firmware
 - `598-636 KiB`: reserved primary-image growth
 - `636-640 KiB`: guard space
@@ -118,3 +123,33 @@ An upload is written directly to the staging area in 2 KiB pieces. It is not
 selected by the bootloader until its image structure and MD5 have passed SDK
 verification, so a failed or interrupted upload leaves the current firmware
 bootable. Do not upload the full serial image through the web page.
+
+CI additionally requires at least 8 KiB free in the SRAM-loaded app slot and
+64 KiB free in both the XIP and compressed-OTA areas. This prevents ordinary
+feature growth from silently consuming the final usable bytes.
+
+## Battery and power-management plan
+
+Factory-firmware analysis identifies PA16/ADC6 as the battery-divider input
+(2.5 V ADC reference, approximately 1.7:1 divider) and PA20 as wake input 6.
+The factory averages ten ADC samples after dropping the minimum and maximum,
+warns at 3.4 V, and hibernates after repeated readings at or below 3.3 V.
+PA23 controls the camera/peripheral rail; it is not a main battery relay.
+No reliable charger-status GPIO has been found, and PA21 is the status LED.
+
+XF16Cam deliberately does not yet estimate battery percentage or enter sleep
+automatically. A missing battery can produce a zero, floating, or
+charger-regulated ADC value, so copying the factory cutoff before calibration
+could make USB-powered devices repeatedly hibernate. The safe implementation
+order is:
+
+1. Add read-only PA16 raw/millivolt telemetry and report charging as unknown.
+2. Add an explicit hibernation command with PA20 and timer wake, plus wake-reason
+   diagnostics.
+3. Make AMIC capture, the camera rail, and the status LED demand-driven.
+4. Treat OTA, settings/SD writes, and active media clients as sleep inhibitors.
+5. Calibrate against a multimeter with the battery attached, then enable
+   percentage estimates and repeated-sample low-voltage hibernation.
+
+These features can remain local to XF16Cam; the current SDK already provides
+standby, hibernation, wake-I/O, wake-timer, and wake-reason APIs.

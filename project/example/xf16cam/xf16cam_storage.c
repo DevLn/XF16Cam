@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "compiler.h"
 #include "common/framework/fs_ctrl.h"
 #include "driver/chip/sdmmc/sdmmc.h"
 #include "fs/fatfs/ff.h"
@@ -13,6 +14,7 @@
 
 static XF16CamStorageInfo g_storage;
 
+__xip_text
 static int xf16cam_storage_read_capacity(void)
 {
 	DWORD free_clusters;
@@ -35,6 +37,7 @@ static int xf16cam_storage_read_capacity(void)
 	return 0;
 }
 
+__xip_text
 int xf16cam_storage_refresh(void)
 {
 	if (!g_storage.mounted) {
@@ -57,11 +60,13 @@ int xf16cam_storage_refresh(void)
 	return 0;
 }
 
+__xip_text
 int xf16cam_storage_init(void)
 {
 	return xf16cam_storage_refresh();
 }
 
+__xip_text
 int xf16cam_storage_format(void)
 {
 	uint8_t *work;
