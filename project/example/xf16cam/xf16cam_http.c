@@ -10,9 +10,12 @@
 #include "driver/chip/hal_flash.h"
 #include "driver/chip/hal_prcm.h"
 #include "driver/chip/hal_wdg.h"
+#include "driver/chip/system_chip.h"
 #include "lwip/sockets.h"
 #include "net/wlan/wlan.h"
+#include "net/wlan/wlan_ext_req.h"
 #include "ota/ota.h"
+#include "common/framework/net_ctrl.h"
 #include "common/framework/sysinfo.h"
 
 #include "xf16cam_config.h"
@@ -49,9 +52,84 @@ static wlan_sta_ap_t g_scan_results[XF16CAM_HTTP_SCAN_MAX];
 static uint32_t g_flash_jedec;
 static uint32_t g_flash_size;
 
+typedef struct {
+	uint32_t sampled_at;
+	int temperature_deci_c;
+	int signal_dbm;
+	int noise_dbm;
+	uint32_t channel;
+	uint8_t sampled;
+	uint8_t temperature_valid;
+	uint8_t signal_valid;
+	uint8_t channel_valid;
+} XF16CamHttpRadioInfo;
+
+static XF16CamHttpRadioInfo g_radio_info;
+
 static void xf16cam_http_message(int fd, const char *status, const char *message);
 
 extern void heap_get_space(uint8_t **start, uint8_t **end, uint8_t **current);
+
+__xip_text
+static const char *xf16cam_http_boot_reason(void)
+{
+	switch (SysGetStartupState()) {
+	case SYS_POWERON:            return "Power-on";
+	case SYS_WATCHDOG_CHIP_RST: return "Watchdog (chip)";
+	case SYS_WATCHDOG_CPU_RST:  return "Watchdog (CPU)";
+	case SYS_SLEEP:              return "Sleep wake";
+	case SYS_STANDBY:            return "Standby wake";
+	case SYS_HIBERNATION:        return "Hibernation wake";
+	case SYS_REBOOT:             return "Controlled reboot";
+	case SYS_CPU_RST:            return "Controlled CPU reset";
+	case SYS_NVIC_RST:           return "NVIC CPU reset";
+	default:                     return "Unknown";
+	}
+}
+
+__xip_text
+static const XF16CamHttpRadioInfo *xf16cam_http_radio_info(void)
+{
+	uint32_t now = OS_TicksToMSecs(OS_GetTicks());
+	wlan_ext_temp_volt_get_t temperature;
+
+	if (g_radio_info.sampled && now - g_radio_info.sampled_at < 10000U)
+		return &g_radio_info;
+	g_radio_info.sampled = 1;
+	g_radio_info.sampled_at = now;
+	g_radio_info.temperature_valid = 0;
+	g_radio_info.signal_valid = 0;
+	g_radio_info.channel_valid = 0;
+	if (g_wlan_netif != NULL &&
+	    wlan_ext_request(g_wlan_netif, WLAN_EXT_CMD_GET_TEMP_VOLT,
+	                     (int)&temperature) == 0) {
+		int32_t value = temperature.Temperature;
+		g_radio_info.temperature_deci_c = value >= 0 ?
+			(int)((value * 10 + 8) / 16) :
+			-(int)((-value * 10 + 8) / 16);
+		g_radio_info.temperature_valid = 1;
+	}
+	if (xf16cam_net_mode() == XF16CAM_WIFI_STA && g_wlan_netif != NULL) {
+		wlan_ext_signal_t signal;
+
+		if (wlan_ext_request(g_wlan_netif, WLAN_EXT_CMD_GET_SIGNAL,
+		                     (int)&signal) == 0) {
+			g_radio_info.noise_dbm = signal.noise;
+			g_radio_info.signal_dbm = signal.rssi / 2 + signal.noise;
+			g_radio_info.signal_valid = 1;
+		}
+	}
+	if (g_wlan_netif != NULL) {
+		uint32_t channel;
+
+		if (wlan_ext_request(g_wlan_netif, WLAN_EXT_CMD_GET_CURRENT_CHN,
+		                     (int)&channel) == 0) {
+			g_radio_info.channel = channel;
+			g_radio_info.channel_valid = 1;
+		}
+	}
+	return &g_radio_info;
+}
 
 __xip_text
 static size_t xf16cam_http_heap_headroom(void)
@@ -200,11 +278,16 @@ static void xf16cam_http_page(int fd)
 	const XF16CamStorageInfo *storage = xf16cam_storage_info();
 	const XF16CamPowerInfo *power = xf16cam_power_info();
 	const struct sysinfo *sysinfo = sysinfo_get();
+	const XF16CamHttpRadioInfo *radio = xf16cam_http_radio_info();
+	XF16CamMediaStats media;
+	uint32_t uptime = xf16cam_board_uptime_seconds();
 	int camera_available = xf16cam_sensor_available();
 	char camera_detail[48];
 	char camera_output[24];
 	char dynamic[640];
 	int length;
+
+	xf16cam_media_stats(&media);
 
 	if (camera_available) {
 		snprintf(camera_detail, sizeof(camera_detail), "%s &middot; %ux%u JPEG",
@@ -342,6 +425,63 @@ static void xf16cam_http_page(int fd)
 	                  (unsigned long)xf16cam_audio_stack_min_free(),
 	                  (unsigned long)xf16cam_board_stack_min_free());
 	xf16cam_http_send_all(fd, dynamic, length);
+	XF16CAM_HTTP_SEND_LITERAL(fd,
+	                  "<section class=card><h2>Runtime</h2><div class=grid>");
+	length = snprintf(dynamic, sizeof(dynamic),
+	                  "<b>Uptime</b><span>%lu days %02lu:%02lu:%02lu</span>"
+	                  "<b>Boot reason</b><span>%s</span>",
+	                  (unsigned long)(uptime / 86400U),
+	                  (unsigned long)((uptime / 3600U) % 24U),
+	                  (unsigned long)((uptime / 60U) % 60U),
+	                  (unsigned long)(uptime % 60U), xf16cam_http_boot_reason());
+	xf16cam_http_send_all(fd, dynamic, length);
+	if (radio->temperature_valid) {
+		length = snprintf(dynamic, sizeof(dynamic),
+		                  "<b>XR872 temperature</b><span>%s%d.%d &deg;C</span>",
+		                  radio->temperature_deci_c < 0 ? "-" : "",
+		                  abs(radio->temperature_deci_c) / 10,
+		                  abs(radio->temperature_deci_c) % 10);
+		xf16cam_http_send_all(fd, dynamic, length);
+	} else {
+		XF16CAM_HTTP_SEND_LITERAL(fd,
+		                  "<b>XR872 temperature</b><span>Unavailable</span>");
+	}
+	length = snprintf(dynamic, sizeof(dynamic),
+	                  "<b>Media client</b><span>%s</span>"
+	                  "<b>Frames captured</b><span>%lu</span>"
+	                  "<b>Frames delivered</b><span>%lu</span>"
+	                  "<b>Frame errors</b><span>%lu</span></div></section>",
+	                  media.active_client == XF16CAM_MEDIA_CLIENT_WEB ? "Browser MJPEG" :
+	                  media.active_client == XF16CAM_MEDIA_CLIENT_RTSP ? "RTSP" : "None",
+	                  (unsigned long)media.frames_captured,
+	                  (unsigned long)media.frames_delivered,
+	                  (unsigned long)media.frame_errors);
+	xf16cam_http_send_all(fd, dynamic, length);
+	XF16CAM_HTTP_SEND_LITERAL(fd,
+	                  "<section class=card><h2>Wi-Fi diagnostics</h2><div class=grid>"
+	                  "<b>SSID</b><span>");
+	if (xf16cam_net_mode() == XF16CAM_WIFI_STA)
+		xf16cam_http_send_escaped(fd, (const uint8_t *)config->ssid,
+		                           strlen(config->ssid), 0);
+	else
+		xf16cam_http_send_text(fd, XF16CAM_AP_SSID);
+	XF16CAM_HTTP_SEND_LITERAL(fd, "</span>");
+	if (radio->signal_valid) {
+		length = snprintf(dynamic, sizeof(dynamic),
+		                  "<b>Signal</b><span>%d dBm</span><b>Noise</b><span>%d dBm</span>",
+		                  radio->signal_dbm, radio->noise_dbm);
+		xf16cam_http_send_all(fd, dynamic, length);
+	} else {
+		XF16CAM_HTTP_SEND_LITERAL(fd,
+		                  "<b>Signal</b><span>Unavailable in AP mode</span>");
+	}
+	if (radio->channel_valid) {
+		length = snprintf(dynamic, sizeof(dynamic),
+		                  "<b>Channel</b><span>%lu</span>",
+		                  (unsigned long)radio->channel);
+		xf16cam_http_send_all(fd, dynamic, length);
+	}
+	XF16CAM_HTTP_SEND_LITERAL(fd, "</div></section>");
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<section class=card><h2>XF16 pin map</h2><div class=grid>"
 	                  "<b>Camera CSI</b><span>PA0-PA11</span>"

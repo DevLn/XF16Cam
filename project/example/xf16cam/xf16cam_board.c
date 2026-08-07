@@ -19,6 +19,7 @@
 static OS_Thread_t g_board_thread;
 static volatile int g_board_ready;
 static volatile int g_board_sleeping;
+static volatile uint32_t g_uptime_seconds;
 
 static int xf16cam_button_pressed(GPIO_Pin pin)
 {
@@ -48,6 +49,8 @@ static void xf16cam_board_reboot(void)
 
 static void xf16cam_board_task(void *arg)
 {
+	OS_Time_t last_tick = OS_GetTicks();
+	uint32_t uptime_ms = OS_TicksToMSecs(last_tick);
 	unsigned int mode_held_ms = 0;
 	unsigned int reset_held_ms = 0;
 	unsigned int blink_ms = 0;
@@ -56,9 +59,19 @@ static void xf16cam_board_task(void *arg)
 	int led = 0;
 
 	(void)arg;
+	g_uptime_seconds = uptime_ms / 1000U;
+	uptime_ms %= 1000U;
 	while (1) {
+		OS_Time_t now = OS_GetTicks();
 		int mode_pressed = xf16cam_board_mode_button_pressed();
 		int reset_pressed = xf16cam_board_reset_button_pressed();
+
+		uptime_ms += OS_TicksToMSecs(now - last_tick);
+		last_tick = now;
+		if (uptime_ms >= 1000U) {
+			g_uptime_seconds += uptime_ms / 1000U;
+			uptime_ms %= 1000U;
+		}
 
 		if (g_board_sleeping) {
 			if (led) {
@@ -163,4 +176,9 @@ void xf16cam_board_prepare_sleep(void)
 uint32_t xf16cam_board_stack_min_free(void)
 {
 	return OS_ThreadGetStackMinFreeSize(&g_board_thread);
+}
+
+uint32_t xf16cam_board_uptime_seconds(void)
+{
+	return g_uptime_seconds;
 }
