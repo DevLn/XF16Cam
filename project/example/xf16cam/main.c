@@ -618,15 +618,18 @@ static void xf16cam_rtsp_server(void)
 
 int main(void)
 {
+	int camera_ready;
+
 	platform_init();
 	printf("xf16cam version %s\n", XF16CAM_VERSION);
 
-	/* Reserve the one large contiguous block before AP/DHCP activity can
-	 * fragment the heap. No capture starts until an RTSP client sends PLAY. */
+	/* Reserve the camera arena before starting XF16Cam's worker tasks. Capture
+	 * begins only when a browser or RTSP client requests video. */
 	xf16_board_camera_power_prepare();
-	if (camera_init() != 0) {
+	camera_ready = camera_init() == 0;
+	if (!camera_ready) {
 		camera_mem_destroy();
-		return -1;
+		printf("xf16cam camera unavailable; continuing with management services\n");
 	}
 	if (xf16cam_audio_start() != 0)
 		printf("xf16cam audio: task start failed\n");
@@ -637,13 +640,18 @@ int main(void)
 		return -1;
 	xf16cam_http_start();
 	xf16cam_board_set_ready();
-	if (xf16cam_config_get()->media_mode == XF16CAM_MEDIA_RTSP) {
+	if (camera_ready && xf16cam_config_get()->media_mode == XF16CAM_MEDIA_RTSP) {
 		xf16cam_rtsp_server();
-	} else {
+	} else if (camera_ready) {
 		printf("xf16cam browser video ready: http://%s/stream.mjpeg\n", xf16cam_net_ip());
 		while (1)
 			OS_MSleep(10000);
+	} else {
+		printf("xf16cam management ready without camera: http://%s/\n", xf16cam_net_ip());
+		while (1)
+			OS_MSleep(10000);
 	}
-	camera_deinit();
+	if (camera_ready)
+		camera_deinit();
 	return -1;
 }

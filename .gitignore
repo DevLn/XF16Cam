@@ -14,6 +14,7 @@
 .project.ld
 .image.cfg
 /.config
+/settings.cfg
 /project/*/gcc/*.iex
 /project/*/gcc/*.dep
 /project/*/gcc/*.build_log.htm

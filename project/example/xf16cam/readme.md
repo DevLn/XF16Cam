@@ -26,6 +26,9 @@ single-client RTSP stream without PSRAM or an SD card.
 - Sensor probing and driver dispatch use a small descriptor registry and one
   register-table backend; adding a compatible sensor does not require changes
   to the shared camera core.
+- A missing or unsupported sensor is non-fatal: Wi-Fi, HTTP setup, OTA, audio,
+  SD management, and diagnostics remain available while video services report
+  that the camera is offline.
 
 ## Camera sensors
 
@@ -55,9 +58,9 @@ FFmpeg/ffplay use `-rtsp_transport tcp`.
 All sensors, including GC0328, use the same probe and retrying table loader;
 GC0328 retains its validated power-cycle, register-delay, and settle timings.
 The capture arena contains two 50 KiB JPEG buffers and no YUV framebuffer.
-Camera power, CSI/JPEG, Wi-Fi, and the RTSP listener are initialized only by
-this example. `PRJCONF_CONSOLE_EN` remains enabled for serial recovery and
-reflashing.
+XF16Cam owns camera power, CSI/JPEG, and its media listeners; the SDK platform
+starts the underlying Wi-Fi/lwIP services. `PRJCONF_CONSOLE_EN` remains enabled
+for serial recovery and reflashing.
 
 ## Confirmed XF16 hardware
 

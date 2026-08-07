@@ -259,11 +259,16 @@ HAL_Status xf16cam_sensor_init(SENSOR_ConfigParam *cfg)
 			return HAL_ERROR;
 		for (index = 0; index < sizeof(g_sensors) / sizeof(g_sensors[0]); ++index) {
 			if (xf16cam_sensor_probe(bus, &g_sensors[index], &chip_id)) {
+				HAL_Status status;
+
 				g_selected = &g_sensors[index];
 				HAL_I2C_DeInit(bus);
 				printf("xf16cam camera: %s detected (id=0x%02x)\n",
 				       g_selected->name, chip_id);
-				return xf16cam_sensor_load_table(cfg);
+				status = xf16cam_sensor_load_table(cfg);
+				if (status != HAL_OK)
+					g_selected = NULL;
+				return status;
 			}
 		}
 		HAL_I2C_DeInit(bus);
@@ -315,7 +320,12 @@ int xf16cam_sensor_configure_camera(uint16_t configured_width,
 
 const char *xf16cam_sensor_name(void)
 {
-	return g_selected ? g_selected->name : "Unknown";
+	return g_selected ? g_selected->name : "Not detected";
+}
+
+int xf16cam_sensor_available(void)
+{
+	return g_selected != NULL;
 }
 
 uint16_t xf16cam_sensor_width(void)

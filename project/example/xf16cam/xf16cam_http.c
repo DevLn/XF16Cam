@@ -12,6 +12,7 @@
 #include "lwip/sockets.h"
 #include "net/wlan/wlan.h"
 #include "ota/ota.h"
+#include "common/framework/sysinfo.h"
 
 #include "xf16cam_config.h"
 #include "xf16cam_audio.h"
@@ -87,7 +88,7 @@ __xip_rodata static const char g_page_head[] =
 	"border-radius:12px;box-shadow:0 2px 8px #18212b12}.viewer{padding:14px;margin-bottom:14px}.viewerTop{display:flex;"
 	"justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}.screen{display:grid;place-items:center;"
 	"min-height:240px;background:#111820;border-radius:8px;overflow:hidden;color:#aeb9c2}.screen img{display:block;width:100%;"
-	"max-width:720px;aspect-ratio:4/3;object-fit:contain}.tabs{display:flex;gap:5px;overflow:auto;padding:5px;background:#dfe6ea;"
+	"max-width:720px;aspect-ratio:4/3;object-fit:contain}.empty{text-align:center;padding:30px}.tabs{display:flex;gap:5px;overflow:auto;padding:5px;background:#dfe6ea;"
 	"border-radius:10px;margin:0 0 14px;position:sticky;top:0;z-index:2}.tabs button{flex:1;min-width:max-content;border:0;"
 	"background:transparent}.tabs button.on{background:#fff;color:var(--brand);box-shadow:0 1px 4px #0002}.panel{display:none}.panel.on{display:grid;"
 	"grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.card{padding:16px}.wide{grid-column:1/-1}.grid{display:grid;"
@@ -177,12 +178,27 @@ static void xf16cam_http_page(int fd)
 	const XF16CamConfig *config = xf16cam_config_get();
 	const XF16CamAudioInfo *audio = xf16cam_audio_info();
 	const XF16CamStorageInfo *storage = xf16cam_storage_info();
+	const struct sysinfo *sysinfo = sysinfo_get();
+	int camera_available = xf16cam_sensor_available();
 	uint32_t flash_jedec;
 	uint32_t flash_size;
+	char camera_detail[48];
+	char camera_output[24];
 	char dynamic[640];
 	int length;
 
 	xf16cam_http_flash_info(&flash_jedec, &flash_size);
+	if (camera_available) {
+		snprintf(camera_detail, sizeof(camera_detail), "%s &middot; %ux%u JPEG",
+		         xf16cam_sensor_name(), (unsigned int)xf16cam_sensor_width(),
+		         (unsigned int)xf16cam_sensor_height());
+		snprintf(camera_output, sizeof(camera_output), "%ux%u",
+		         (unsigned int)xf16cam_sensor_width(),
+		         (unsigned int)xf16cam_sensor_height());
+	} else {
+		snprintf(camera_detail, sizeof(camera_detail), "No supported sensor detected");
+		snprintf(camera_output, sizeof(camera_output), "Unavailable");
+	}
 
 	xf16cam_http_begin(fd, "200 OK", "text/html; charset=utf-8");
 	xf16cam_http_send_text(fd, g_page_head);
@@ -190,18 +206,22 @@ static void xf16cam_http_page(int fd)
 	                  "<header><div><h1>XF16Cam</h1><div class=meta>Firmware %s</div></div>"
 	                  "<div><span class=pill>%s</span> <span class=meta>%s</span></div></header><main>"
 	                  "<section class=viewer><div class=viewerTop><div><b>Live camera</b>"
-	                  "<div class=meta>%s &middot; %ux%u JPEG</div></div><span class=pill>%s</span></div>"
+	                  "<div class=meta>%s</div></div><span class=pill>%s</span></div>"
 	                  "<div class=screen>",
 	                  XF16CAM_VERSION,
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Setup AP",
-	                  xf16cam_net_ip(), xf16cam_sensor_name(),
-	                  (unsigned int)xf16cam_sensor_width(),
-	                  (unsigned int)xf16cam_sensor_height(),
+	                  xf16cam_net_ip(), camera_detail,
+	                  !camera_available ? "Offline" :
 	                  config->media_mode == XF16CAM_MEDIA_WEB ? "Browser MJPEG" : "RTSP");
 	xf16cam_http_send_all(fd, dynamic, length);
 	if (config->media_mode == XF16CAM_MEDIA_WEB) {
+		if (camera_available)
+			XF16CAM_HTTP_SEND_LITERAL(fd,
+			                  "<img id=video src=/stream.mjpeg alt='Live camera'></div>");
+		else
+			XF16CAM_HTTP_SEND_LITERAL(fd,
+			                  "<div class=empty><b>Camera unavailable</b><p>Connect a supported sensor, then reboot.</p></div></div>");
 		XF16CAM_HTTP_SEND_LITERAL(fd,
-		                  "<img id=video src=/stream.mjpeg alt='Live camera'></div>"
 		                  "<div><button type=button id=listen onclick=toggleAudio()>Listen</button> "
 		                  "<span id=audioState>Audio stopped</span></div>"
 		                  "<script>let ac,reader,next=0;function ulaw(v){let u=(~v)&255,t=((u&15)<<3)+132;"
@@ -214,11 +234,14 @@ static void xf16cam_http_page(int fd)
 		                  "for(let i=0;i<d.length;i++)d[i]=ulaw(r.value[i]);let n=ac.createBufferSource();n.buffer=q;n.connect(ac.destination);"
 		                  "let at=Math.max(next,ac.currentTime+.04);n.start(at);next=at+q.duration}}catch(e){s.textContent='Audio connection failed';"
 		                  "if(ac)await ac.close();ac=reader=null;b.textContent='Listen'}}</script>");
-	} else {
+	} else if (camera_available) {
 		length = snprintf(dynamic, sizeof(dynamic),
 		                  "<div><a href='rtsp://%s:8554/stream'>rtsp://%s:8554/stream</a></div></div>",
 		                  xf16cam_net_ip(), xf16cam_net_ip());
 		xf16cam_http_send_all(fd, dynamic, length);
+	} else {
+		XF16CAM_HTTP_SEND_LITERAL(fd,
+		                  "<div class=empty><b>Camera unavailable</b><p>RTSP is disabled until a supported sensor is connected.</p></div></div>");
 	}
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<form method=post action=/api/media>"
@@ -233,10 +256,10 @@ static void xf16cam_http_page(int fd)
 	                  "<b>Sensor</b><span>");
 	xf16cam_http_send_text(fd, xf16cam_sensor_name());
 	length = snprintf(dynamic, sizeof(dynamic),
-	                  "</span><b>JPEG output</b><span>%ux%u</span><b>Stream mode</b><span>%s</span></div></section>"
+	                  "</span><b>JPEG output</b><span>%s</span><b>Stream mode</b><span>%s</span></div></section>"
 	                  "<section class=card><h2>Audio</h2><div class=grid><b>Microphone</b><span>%s</span>"
 	                  "<b>Peak level</b><span><span id=mic>%u</span>/32768</span></div></section></div>",
-	                  (unsigned int)xf16cam_sensor_width(), (unsigned int)xf16cam_sensor_height(),
+	                  camera_output, !camera_available ? "Disabled (no sensor)" :
 	                  config->media_mode == XF16CAM_MEDIA_WEB ? "Browser MJPEG" : "RTSP",
 	                  audio->active ? "AMIC active, PCMU/8000" : "AMIC unavailable", audio->peak);
 	xf16cam_http_send_all(fd, dynamic, length);
@@ -272,10 +295,13 @@ static void xf16cam_http_page(int fd)
 	                  "<div id=system class=panel><section class=card><h2>Device</h2><div class=grid>");
 	length = snprintf(dynamic, sizeof(dynamic),
 	                  "<b>Network mode</b><span>%s</span><b>IP address</b><span>%s</span>"
+	                  "<b>Wi-Fi MAC</b><span>%02X:%02X:%02X:%02X:%02X:%02X (eFuse)</span>"
 	                  "<b>Free SRAM</b><span>%lu bytes</span><b>Flash JEDEC ID</b><span>%02lX %02lX %02lX</span>"
 	                  "<b>Flash capacity</b><span>%lu KiB</span><b>Mode button</b><span>PA15 (%s)</span>"
 	                  "<b>Setup button</b><span>PA20 (%s)</span></div></section>",
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Setup AP", xf16cam_net_ip(),
+	                  sysinfo->mac_addr[0], sysinfo->mac_addr[1], sysinfo->mac_addr[2],
+	                  sysinfo->mac_addr[3], sysinfo->mac_addr[4], sysinfo->mac_addr[5],
 	                  (unsigned long)xf16cam_http_heap_headroom(),
 	                  (unsigned long)(flash_jedec & 0xff),
 	                  (unsigned long)((flash_jedec >> 8) & 0xff),
@@ -545,7 +571,9 @@ static int xf16cam_http_handle(int fd)
 	if (strcmp(method, "GET") == 0 && strcmp(path, "/") == 0) {
 		xf16cam_http_page(fd);
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/stream.mjpeg") == 0) {
-		if (xf16cam_config_get()->media_mode != XF16CAM_MEDIA_WEB)
+		if (!xf16cam_sensor_available())
+			xf16cam_http_message(fd, "503 Service Unavailable", "No supported camera sensor is available.");
+		else if (xf16cam_config_get()->media_mode != XF16CAM_MEDIA_WEB)
 			xf16cam_http_message(fd, "409 Conflict", "Browser video mode is not active.");
 		else if (xf16cam_mjpeg_start(fd) != 0)
 			xf16cam_http_message(fd, "503 Service Unavailable", "A browser video client is already active.");
