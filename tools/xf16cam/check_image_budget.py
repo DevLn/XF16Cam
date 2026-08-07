@@ -140,10 +140,19 @@ def main():
 			ota_end - flash_size
 		))
 
-	for filename in ("xr_system.img", "xr_system_img_xz.img"):
+	packaged_limits = {
+		"xr_system.img": image_limit,
+		"xr_system_img_xz.img": xz_limit,
+	}
+	for filename, limit in packaged_limits.items():
 		artifact = args.image_dir / filename
 		if artifact.is_file():
-			print("{:<20} {:>9,} bytes packaged".format(filename, artifact.stat().st_size))
+			used = artifact.stat().st_size
+			print("{:<20} {:>9,} bytes packaged".format(filename, used))
+			if used > limit:
+				failures.append("{} exceeds its packaged-image limit by {:,} bytes".format(
+					filename, used - limit
+				))
 
 	if failures:
 		for failure in failures:

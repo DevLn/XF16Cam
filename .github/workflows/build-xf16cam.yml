@@ -92,6 +92,12 @@ jobs:
             "dist/xf16cam-xr872-v${version}-ota.img"
           arm-none-eabi-size project/example/xf16cam/gcc/xf16cam.axf \
             | tee dist/size.txt
+          arm-none-eabi-size -A project/example/xf16cam/gcc/xf16cam.axf \
+            > dist/sections.txt
+          arm-none-eabi-nm -S --size-sort --radix=d \
+            project/example/xf16cam/gcc/xf16cam.axf > dist/symbols.txt
+          gzip -9 -c project/example/xf16cam/gcc/xf16cam.map \
+            > dist/xf16cam.map.gz
           sha256sum dist/*.img > dist/SHA256SUMS
           echo "XF16CAM_VERSION=$version" >> "$GITHUB_ENV"
 

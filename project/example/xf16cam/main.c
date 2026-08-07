@@ -35,9 +35,10 @@
 
 #define JPEG_ONLINE_EN           (1)
 #define JPEG_BUFFER_COUNT        (2)
-#define JPEG_SRAM_SIZE           (104 * 1024)
 #define JPEG_MPART_EN            (0)
 #define JPEG_BUFF_SIZE           (50 * 1024)
+#define JPEG_SRAM_SIZE           \
+	(JPEG_BUFFER_COUNT * (JPEG_BUFF_SIZE + CAMERA_JPEG_HEADER_LEN + 1023U))
 #define JPEG_IMAGE_WIDTH         (320)
 #define JPEG_IMAGE_HEIGHT        (240)
 #define XF16CAM_RTSP_PORT        (8554)
@@ -47,8 +48,8 @@
 #define XF16CAM_RTSP_HANDSHAKE_MS (10000U)
 #define XF16CAM_RTSP_IO_TIMEOUT_MS (2000)
 
-_Static_assert(JPEG_SRAM_SIZE >=
-	       JPEG_BUFFER_COUNT * (JPEG_BUFF_SIZE + CAMERA_JPEG_HEADER_LEN + 1023U),
+_Static_assert(JPEG_SRAM_SIZE >= JPEG_BUFFER_COUNT *
+	       (JPEG_BUFF_SIZE + CAMERA_JPEG_HEADER_LEN + 1023U),
 	       "JPEG arena cannot hold aligned buffers");
 
 #define XF16_SENSOR_I2C_ID       I2C0_ID

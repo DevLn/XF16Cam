@@ -47,8 +47,17 @@ enum {
 };
 
 static OS_Thread_t g_http_thread;
-static char g_request[XF16CAM_HTTP_REQUEST_SIZE];
-static wlan_sta_ap_t g_scan_results[XF16CAM_HTTP_SCAN_MAX];
+/* Requests and scan results are consumed by the same HTTP task and never
+ * coexist. Sharing their storage returns 912 bytes to the SRAM heap. */
+static union {
+	char request[XF16CAM_HTTP_REQUEST_SIZE];
+	wlan_sta_ap_t scan_results[XF16CAM_HTTP_SCAN_MAX];
+} g_http_workspace;
+_Static_assert(sizeof(g_http_workspace.scan_results) <=
+	       sizeof(g_http_workspace.request),
+	       "HTTP scan results exceed the shared workspace");
+#define g_request      g_http_workspace.request
+#define g_scan_results g_http_workspace.scan_results
 static uint32_t g_flash_jedec;
 static uint32_t g_flash_size;
 
@@ -386,7 +395,7 @@ static void xf16cam_http_page(int fd)
 	length = snprintf(dynamic, sizeof(dynamic),
 	                  "<b>Network mode</b><span>%s</span><b>IP address</b><span>%s</span>"
 	                  "<b>Wi-Fi MAC</b><span>%02X:%02X:%02X:%02X:%02X:%02X (eFuse)</span>"
-	                  "<b>Heap headroom</b><span>%lu bytes</span><b>Flash JEDEC ID</b><span>%02lX %02lX %02lX</span>"
+	                  "<b>Heap top reserve</b><span>%lu bytes</span><b>Flash JEDEC ID</b><span>%02lX %02lX %02lX</span>"
 	                  "<b>Flash capacity</b><span>%lu KiB</span><b>Mode button</b><span>PA15 (%s)</span>"
 	                  "<b>Setup button</b><span>PA20 (%s)</span>",
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Setup AP", xf16cam_net_ip(),

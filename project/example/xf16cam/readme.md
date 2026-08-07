@@ -67,7 +67,8 @@ FFmpeg/ffplay use `-rtsp_transport tcp`.
 
 All sensors, including GC0328, use the same probe and retrying table loader;
 GC0328 retains its validated power-cycle, register-delay, and settle timings.
-The 104 KiB capture arena contains two aligned 50 KiB JPEG buffers and no YUV framebuffer.
+The 105,692-byte capture arena is the checked worst-case bound for two aligned
+50 KiB JPEG buffers and contains no YUV framebuffer.
 Frames are acquired one at a time so a slow network client cannot race the
 hardware encoder and observe a buffer while it is being overwritten.
 The camera rail/capture arena and AMIC are demand-driven: boot probes the sensor
@@ -97,6 +98,9 @@ Ubuntu 22.04. Each run uploads an `xf16cam-xr872` artifact containing:
 - `xf16cam-xr872-v<version>-ota.img`: compressed image for the web updater
 - `SHA256SUMS`: image checksum
 - `size.txt`: linked application memory usage
+- `sections.txt`: per-section linked memory usage
+- `symbols.txt`: linked symbols sorted by size
+- `xf16cam.map.gz`: compressed linker map for placement and growth analysis
 - `image-budget.txt`: app, XIP, OTA, and reserved-tail usage/headroom
 
 For a local Linux build with `arm-none-eabi-gcc` on `PATH`:
@@ -120,10 +124,10 @@ The flashable result is
 ## 1 MiB flash layout
 
 - `0-32 KiB`: bootloader and reserved space
-- `32-86 KiB`: SRAM-loaded application
-- `86-560 KiB`: XIP application
-- `560-598 KiB`: WLAN firmware
-- `598-636 KiB`: reserved primary-image growth
+- `32-96 KiB`: SRAM-loaded application
+- `96-597 KiB`: XIP application
+- `597-635 KiB`: WLAN firmware
+- `635-636 KiB`: reserved primary-image growth
 - `636-640 KiB`: guard space
 - `640-644 KiB`: SDK OTA metadata
 - `644-1016 KiB`: compressed, verified OTA staging image
