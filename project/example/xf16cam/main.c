@@ -80,9 +80,6 @@ static uint32_t g_camera_users;
 static OS_Thread_t g_mjpeg_thread;
 static volatile int g_mjpeg_active;
 static volatile int g_rtsp_active;
-static volatile uint32_t g_frames_captured;
-static volatile uint32_t g_frames_delivered;
-static volatile uint32_t g_frame_errors;
 
 static CAMERA_Cfg camera_cfg = {
 	.jpeg_cfg.jpeg_en = 1,
@@ -422,20 +419,16 @@ static int xf16cam_send_all(int fd, const void *data, uint32_t len)
 static int xf16cam_capture_jpeg(CAMERA_JpegBuffInfo *info, uint8_t **jpeg,
 				uint32_t *jpeg_len)
 {
-	if (HAL_CAMERA_CaptureImage(CAMERA_OUT_JPEG, info, 1) != 0) {
-		g_frame_errors++;
+	if (HAL_CAMERA_CaptureImage(CAMERA_OUT_JPEG, info, 1) != 0)
 		return -1;
-	}
 	if (info->buff_index >= JPEG_BUFFER_COUNT || info->size == 0 ||
 	    info->size > mem_mgmt.jpeg_buf[info->buff_index].size) {
-		g_frame_errors++;
 		printf("xf16cam invalid capture metadata: index=%u len=%lu\n",
 		       info->buff_index, (unsigned long)info->size);
 		return 1;
 	}
 	*jpeg = mem_mgmt.jpeg_buf[info->buff_index].addr - CAMERA_JPEG_HEADER_LEN;
 	*jpeg_len = info->size + CAMERA_JPEG_HEADER_LEN;
-	g_frames_captured++;
 	return 0;
 }
 
@@ -474,7 +467,6 @@ static int xf16cam_mjpeg_stream(int fd)
 		    (eoi_len != 0 && xf16cam_send_all(fd, eoi, eoi_len) != 0) ||
 		    xf16cam_send_all(fd, "\r\n", 2) != 0)
 			break;
-		g_frames_delivered++;
 	}
 	printf("xf16cam WEB client stopped\n");
 	return 0;
@@ -892,7 +884,6 @@ static int xf16cam_stream_client(int fd, const char *ip)
 		if (capture > 0)
 			continue;
 		if (xf16cam_parse_jpeg(jpeg, jpeg_len, &jpg) != 0) {
-			g_frame_errors++;
 			printf("xf16cam invalid jpeg: index=%u len=%lu\n",
 			       info.buff_index, (unsigned long)jpeg_len);
 			continue;
@@ -904,7 +895,6 @@ static int xf16cam_stream_client(int fd, const char *ip)
 		if (xf16cam_send_rtp_jpeg(fd, &jpg, &sequence, timestamp,
 		                            session.video_channel) != 0)
 			break;
-		g_frames_delivered++;
 		timestamp = OS_TicksToMSecs(OS_GetTicks()) * 90U;
 		if (session.audio_setup &&
 		    xf16cam_send_rtp_audio(fd, &audio_sequence, &audio_cursor,
@@ -977,16 +967,6 @@ int xf16cam_media_quiesce_for_update(uint32_t timeout_ms)
 		OS_MSleep(10);
 	}
 	return -1;
-}
-
-void xf16cam_media_stats(XF16CamMediaStats *stats)
-{
-	stats->frames_captured = g_frames_captured;
-	stats->frames_delivered = g_frames_delivered;
-	stats->frame_errors = g_frame_errors;
-	stats->active_client = g_mjpeg_active ? XF16CAM_MEDIA_CLIENT_WEB :
-	                       g_rtsp_active ? XF16CAM_MEDIA_CLIENT_RTSP :
-	                       XF16CAM_MEDIA_CLIENT_NONE;
 }
 
 static void __attribute__((noreturn)) xf16cam_idle(void)
