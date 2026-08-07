@@ -18,6 +18,7 @@
 
 static OS_Thread_t g_board_thread;
 static volatile int g_board_ready;
+static volatile int g_board_sleeping;
 
 static int xf16cam_button_pressed(GPIO_Pin pin)
 {
@@ -59,6 +60,14 @@ static void xf16cam_board_task(void *arg)
 		int mode_pressed = xf16cam_board_mode_button_pressed();
 		int reset_pressed = xf16cam_board_reset_button_pressed();
 
+		if (g_board_sleeping) {
+			if (led) {
+				led = 0;
+				HAL_GPIO_WritePin(GPIO_PORT_A, XF16CAM_LED_PIN, GPIO_PIN_LOW);
+			}
+			OS_MSleep(XF16CAM_BUTTON_POLL_MS);
+			continue;
+		}
 		if (!g_board_ready) {
 			blink_ms += XF16CAM_BUTTON_POLL_MS;
 			if (blink_ms >= 250) {
@@ -142,4 +151,16 @@ int xf16cam_board_init(void)
 void xf16cam_board_set_ready(void)
 {
 	g_board_ready = 1;
+}
+
+void xf16cam_board_prepare_sleep(void)
+{
+	g_board_sleeping = 1;
+	g_board_ready = 0;
+	HAL_GPIO_WritePin(GPIO_PORT_A, XF16CAM_LED_PIN, GPIO_PIN_LOW);
+}
+
+uint32_t xf16cam_board_stack_min_free(void)
+{
+	return OS_ThreadGetStackMinFreeSize(&g_board_thread);
 }

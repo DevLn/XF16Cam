@@ -19,6 +19,8 @@ single-client RTSP stream without PSRAM or an SD card.
 - Browser MJPEG frames are terminated as standalone, immutable JPEG images;
   both web and RTSP clients finish sending one frame before the next capture.
 - Device information reports the detected flash ID/capacity and known XF16 pin map.
+- System diagnostics report minimum spare stack for the HTTP, audio, and board
+  workers, making future stack reductions evidence-based.
 - PA15 short-press switches Web/RTSP mode; PA20 held for three seconds restores
   the setup AP. PA21 blinks during startup and stays on when services are ready.
 - An optional one-bit SD card can be mounted and inspected from the web page.
@@ -145,15 +147,18 @@ warns at 3.4 V, and hibernates after repeated readings at or below 3.3 V.
 PA23 controls the camera/peripheral rail; it is not a main battery relay.
 No reliable charger-status GPIO has been found, and PA21 is the status LED.
 
-XF16Cam deliberately does not yet estimate battery percentage or enter sleep
-automatically. A missing battery can produce a zero, floating, or
+The System tab can take an explicit raw/approximate millivolt reading from
+PA16 and can enter hibernation on request; PA20 is configured as its falling-edge
+wake source. Charging state remains unknown. XF16Cam deliberately does not yet
+estimate battery percentage or sleep automatically. A missing battery can produce a zero, floating, or
 charger-regulated ADC value, so copying the factory cutoff before calibration
 could make USB-powered devices repeatedly hibernate. The safe implementation
 order is:
 
 1. Add read-only PA16 raw/millivolt telemetry and report charging as unknown.
-2. Add an explicit hibernation command with PA20 and timer wake, plus wake-reason
-   diagnostics.
+   (Implemented; calibration pending.)
+2. Add explicit hibernation with PA20 wake. (Implemented; battery-hardware
+   validation and wake-reason diagnostics pending.)
 3. Make AMIC capture and the camera rail demand-driven. (Implemented.)
 4. Treat OTA, settings/SD writes, and active media clients as sleep inhibitors.
 5. Calibrate against a multimeter with the battery attached, then enable

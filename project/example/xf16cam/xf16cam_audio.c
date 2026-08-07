@@ -284,3 +284,8 @@ int xf16cam_audio_read(uint32_t *cursor, uint8_t *pcmu, uint32_t *timestamp)
 	(*cursor)++;
 	return 1;
 }
+
+uint32_t xf16cam_audio_stack_min_free(void)
+{
+	return OS_ThreadGetStackMinFreeSize(&g_audio_thread);
+}

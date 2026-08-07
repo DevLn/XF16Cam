@@ -21,6 +21,7 @@
 #include "xf16cam_http.h"
 #include "xf16cam_media.h"
 #include "xf16cam_net.h"
+#include "xf16cam_power.h"
 #include "xf16cam_sensor.h"
 #include "xf16cam_storage.h"
 #include "xf16cam_version.h"
@@ -38,6 +39,7 @@ enum {
 	XF16CAM_HTTP_KEEP_RUNNING = 0,
 	XF16CAM_HTTP_COLD_REBOOT,
 	XF16CAM_HTTP_OTA_REBOOT,
+	XF16CAM_HTTP_HIBERNATE,
 	XF16CAM_HTTP_DETACH_CLIENT,
 };
 
@@ -46,6 +48,8 @@ static char g_request[XF16CAM_HTTP_REQUEST_SIZE];
 static wlan_sta_ap_t g_scan_results[XF16CAM_HTTP_SCAN_MAX];
 static uint32_t g_flash_jedec;
 static uint32_t g_flash_size;
+
+static void xf16cam_http_message(int fd, const char *status, const char *message);
 
 extern void heap_get_space(uint8_t **start, uint8_t **end, uint8_t **current);
 
@@ -103,7 +107,7 @@ __xip_rodata static const char g_page_head[] =
 	"input,button{font:inherit;min-height:44px;padding:9px 11px;margin:4px 0;border:1px solid #b9c5cd;border-radius:7px}input{width:100%;background:#fff;font-size:16px}"
 	"button{cursor:pointer;background:#f7f9fa}button.primary{background:var(--brand);border-color:var(--brand);color:#fff}"
 	"small{color:var(--muted)}a{color:#096b99}.rtsp{overflow-wrap:anywhere}.nets{display:grid;gap:7px;margin:10px 0}.net{width:100%;display:flex;"
-	"align-items:center;justify-content:space-between;text-align:left;margin:0;background:#fff}.net span:last-child{color:var(--muted);font-size:.82rem}.net.sel{border-color:var(--brand);"
+	"align-items:center;justify-content:space-between;text-align:left;margin:0;background:#fff}.net.sel{border-color:var(--brand);"
 	"box-shadow:0 0 0 2px #176b5b33;background:#f3faf8}.net.empty{justify-content:center;color:var(--muted)}@media(max-width:680px){header{align-items:flex-start}.panel.on{grid-template-columns:1fr}"
 	".wide{grid-column:auto}.screen{min-height:180px}.grid{grid-template-columns:1fr}.grid b{margin-top:5px}}</style></head><body>";
 
@@ -194,6 +198,7 @@ static void xf16cam_http_page(int fd)
 	const XF16CamConfig *config = xf16cam_config_get();
 	const XF16CamAudioInfo *audio = xf16cam_audio_info();
 	const XF16CamStorageInfo *storage = xf16cam_storage_info();
+	const XF16CamPowerInfo *power = xf16cam_power_info();
 	const struct sysinfo *sysinfo = sysinfo_get();
 	int camera_available = xf16cam_sensor_available();
 	char camera_detail[48];
@@ -317,7 +322,7 @@ static void xf16cam_http_page(int fd)
 	                  "<b>Wi-Fi MAC</b><span>%02X:%02X:%02X:%02X:%02X:%02X (eFuse)</span>"
 	                  "<b>Contiguous heap headroom</b><span>%lu bytes</span><b>Flash JEDEC ID</b><span>%02lX %02lX %02lX</span>"
 	                  "<b>Flash capacity</b><span>%lu KiB</span><b>Mode button</b><span>PA15 (%s)</span>"
-	                  "<b>Setup button</b><span>PA20 (%s)</span></div></section>",
+	                  "<b>Setup button</b><span>PA20 (%s)</span>",
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Setup AP", xf16cam_net_ip(),
 	                  sysinfo->mac_addr[0], sysinfo->mac_addr[1], sysinfo->mac_addr[2],
 	                  sysinfo->mac_addr[3], sysinfo->mac_addr[4], sysinfo->mac_addr[5],
@@ -329,19 +334,41 @@ static void xf16cam_http_page(int fd)
 	                  xf16cam_board_mode_button_pressed() ? "pressed" : "released",
 	                  xf16cam_board_reset_button_pressed() ? "pressed" : "released");
 	xf16cam_http_send_all(fd, dynamic, length);
+	length = snprintf(dynamic, sizeof(dynamic),
+	                  "<b>HTTP stack spare</b><span>%lu bytes</span>"
+	                  "<b>Audio stack spare</b><span>%lu bytes</span>"
+	                  "<b>Board stack spare</b><span>%lu bytes</span></div></section>",
+	                  (unsigned long)OS_ThreadGetStackMinFreeSize(&g_http_thread),
+	                  (unsigned long)xf16cam_audio_stack_min_free(),
+	                  (unsigned long)xf16cam_board_stack_min_free());
+	xf16cam_http_send_all(fd, dynamic, length);
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<section class=card><h2>XF16 pin map</h2><div class=grid>"
 	                  "<b>Camera CSI</b><span>PA0-PA11</span>"
 	                  "<b>Camera control</b><span>PA14</span>"
 	                  "<b>Status LED</b><span>PA21 (factory-confirmed)</span>"
-	                  "<b>Battery sense</b><span>PA16 / ADC6 (telemetry planned)</span>"
+	                  "<b>Battery sense</b><span>PA16 / ADC6</span>"
 	                  "<b>Camera power rail</b><span>PA23</span>"
 	                  "<b>SD card</b><span>PB16 CMD, PB17 D0, PB18 CLK</span>"
 	                  "<b>Console</b><span>PB0 TX, PB1 RX</span>"
 	                  "<b>SPI flash</b><span>PB2-PB7</span>"
 	                  "<b>Mode button</b><span>PA15; short press switches Web/RTSP</span>"
 	                  "<b>Setup button</b><span>PA20; hold 3 seconds to restore AP</span>"
-	                  "</div></section>");
+	                  "</div></section><section class=card><h2>Power</h2><div class=grid>"
+	                  "<b>Battery input</b><span id=battery>");
+	if (power->valid) {
+		length = snprintf(dynamic, sizeof(dynamic), "%u mV (raw %u, approx.)",
+		                  power->millivolts, power->raw);
+		xf16cam_http_send_all(fd, dynamic, length);
+	} else {
+		XF16CAM_HTTP_SEND_LITERAL(fd, "Not measured");
+	}
+	XF16CAM_HTTP_SEND_LITERAL(fd,
+	                  "</span><b>Charging</b><span>Unknown</span>"
+	                  "</div><button type=button onclick=measurePower()>Measure voltage</button>"
+	                  "<form method=post action=/api/hibernate onsubmit=\"return confirm('Hibernate? Press PA20 to wake.')\">"
+	                  "<button type=submit>Hibernate</button></form>"
+	                  "<small>Approximate; no automatic cutoff.</small></section>");
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<section class='card wide'><h2>Firmware update</h2><p>Select an XF16Cam OTA image. Keep power connected until it restarts.</p>"
 	                  "<input id=ota type=file accept=.img><button class=primary type=button onclick=update()>Install update</button> <span id=up aria-live=polite></span></section></div>"
@@ -357,6 +384,8 @@ static void xf16cam_http_page(int fd)
 	                  "m.textContent=n.rssi+' dBm · '+(n.secure?'Secured':'Open');o.append(x,m);d.append(o)});"
 	                  "if(!a.length)d.innerHTML='<div class=\"net empty\">No networks found</div>';s.textContent=a.length+' found'}"
 	                  "catch(e){s.textContent='Scan failed';d.innerHTML='<div class=\"net empty\">Try scanning again</div>'}finally{b.disabled=false}}"
+	                  "async function measurePower(){let b=document.querySelector('#battery');b.textContent='Measuring...';try{let r=await fetch('/api/power',{method:'POST'});"
+	                  "if(!r.ok)throw 0;let p=await r.json();b.textContent=p.millivolts+' mV (raw '+p.raw+', approx.)'}catch(e){b.textContent='Measurement failed'}}"
 	                  "async function update(){let f=document.querySelector('#ota').files[0],s=document.querySelector('#up');"
 	                  "if(!f){s.textContent='Choose a file';return}if(!confirm('Install '+f.name+' and reboot?'))return;"
 	                  "s.textContent='Uploading...';try{let r=await fetch('/api/ota',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});"
@@ -377,6 +406,25 @@ static void xf16cam_http_audio_json(int fd)
 	                      audio->available ? "true" : "false", audio->active ? "true" : "false", audio->peak, audio->mean,
 	                      (unsigned long)audio->packets, (unsigned long)audio->read_errors);
 
+	xf16cam_http_begin_length(fd, "200 OK", "application/json", length);
+	xf16cam_http_send_all(fd, body, length);
+}
+
+__xip_text
+static void xf16cam_http_power_json(int fd)
+{
+	const XF16CamPowerInfo *power;
+	char body[80];
+	int length;
+
+	if (xf16cam_power_measure() != 0) {
+		xf16cam_http_message(fd, "503 Service Unavailable", "Battery read failed.");
+		return;
+	}
+	power = xf16cam_power_info();
+	length = snprintf(body, sizeof(body),
+	                  "{\"raw\":%u,\"millivolts\":%u,\"calibrated\":false}",
+	                  power->raw, power->millivolts);
 	xf16cam_http_begin_length(fd, "200 OK", "application/json", length);
 	xf16cam_http_send_all(fd, body, length);
 }
@@ -559,6 +607,7 @@ static int xf16cam_http_recv_deadline(int fd, void *buffer, int length,
 	return recv(fd, buffer, length, 0);
 }
 
+__attribute__((noinline))
 static int xf16cam_http_ota(int fd, char *body, int body_length, int content_length)
 {
 	int written = 0;
@@ -613,6 +662,7 @@ fail:
 	return XF16CAM_HTTP_KEEP_RUNNING;
 }
 
+__xip_text
 static int xf16cam_http_handle(int fd)
 {
 	char method[8];
@@ -696,6 +746,8 @@ static int xf16cam_http_handle(int fd)
 		xf16cam_http_scan_json(fd);
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/audio") == 0) {
 		xf16cam_http_audio_json(fd);
+	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/power") == 0) {
+		xf16cam_http_power_json(fd);
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/wifi") == 0) {
 		if (xf16cam_form_value(body, "ssid", ssid, sizeof(ssid)) != 0 ||
 		    xf16cam_form_value(body, "password", psk, sizeof(psk)) != 0 ||
@@ -747,6 +799,19 @@ static int xf16cam_http_handle(int fd)
 			xf16cam_http_message(fd, "500 Internal Server Error", "SD card formatting failed.");
 		else
 			xf16cam_http_message(fd, "200 OK", "SD card formatted as FAT32.");
+	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/hibernate") == 0) {
+		if (xf16cam_update_begin() != 0) {
+			xf16cam_http_message(fd, "409 Conflict", "Device is busy.");
+			return XF16CAM_HTTP_KEEP_RUNNING;
+		}
+		if (xf16cam_media_quiesce_for_update(XF16CAM_OTA_QUIESCE_MS) != 0) {
+			xf16cam_update_end();
+			xf16cam_http_message(fd, "503 Service Unavailable",
+			                     "Active media could not stop safely. Close stream clients and try again.");
+			return XF16CAM_HTTP_KEEP_RUNNING;
+		}
+		xf16cam_http_message(fd, "200 OK", "Hibernating; press PA20 to wake.");
+		return XF16CAM_HTTP_HIBERNATE;
 	} else {
 		xf16cam_http_message(fd, "404 Not Found", "Page not found.");
 	}
@@ -773,6 +838,11 @@ static void xf16cam_http_task(void *arg)
 			OS_MSleep(750);
 			if (action == XF16CAM_HTTP_OTA_REBOOT)
 				ota_reboot();
+			if (action == XF16CAM_HTTP_HIBERNATE) {
+				xf16cam_power_hibernate();
+				xf16cam_update_end();
+				continue;
+			}
 			HAL_PRCM_SetCPUABootFlag(PRCM_CPUA_BOOT_FROM_COLD_RESET);
 			HAL_WDG_Reboot();
 		}
