@@ -36,6 +36,7 @@
 #include "kernel/os/os.h"
 
 #include "xf16cam_config.h"
+#include "xf16cam_storage.h"
 
 static char *xf16cam_cmd_arg(char **cursor)
 {
@@ -75,6 +76,8 @@ static void xf16cam_cmd_response(int status, int prompt)
 
 static void xf16cam_cmd_reboot(PRCM_CPUABootFlag flag)
 {
+	if (xf16cam_storage_unmount() != 0)
+		printf("xf16cam console: SD eject failed before reboot\n");
 	xf16cam_cmd_response(0, 0);
 	HAL_PRCM_SetCPUABootFlag(flag);
 	HAL_WDG_Reboot();
@@ -109,6 +112,8 @@ static void xf16cam_cmd_wifi(char *args)
 	}
 
 	printf("wifi config saved; rebooting\n");
+	if (xf16cam_storage_unmount() != 0)
+		printf("xf16cam console: SD eject failed before reboot\n");
 	xf16cam_cmd_response(0, 0);
 	OS_MSleep(100);
 	HAL_PRCM_SetCPUABootFlag(PRCM_CPUA_BOOT_FROM_COLD_RESET);

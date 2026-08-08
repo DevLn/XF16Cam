@@ -7,6 +7,7 @@
 
 #include "xf16cam_board.h"
 #include "xf16cam_config.h"
+#include "xf16cam_storage.h"
 
 #define XF16CAM_LED_PIN              GPIO_PIN_21
 #define XF16CAM_MODE_BUTTON_PIN      GPIO_PIN_15
@@ -41,6 +42,8 @@ static void xf16cam_board_reboot(void)
 		printf("xf16cam reboot deferred: firmware update is active\n");
 		return;
 	}
+	if (xf16cam_storage_unmount() != 0)
+		printf("xf16cam board: SD eject failed before reboot\n");
 	OS_MSleep(250);
 	HAL_PRCM_SetCPUABootFlag(PRCM_CPUA_BOOT_FROM_COLD_RESET);
 	HAL_WDG_Reboot();

@@ -10,8 +10,8 @@
  * Factory-derived register/value sequences supplied in the XF16 camera
  * research bundle. HI704 is shared by FTY/X5/X6 (SHA-256 21cc3bc8...),
  * SP0A20 is from HQT6 (6a73cbec...), and SP0828 uses the 24 MHz FTY/X5/X6
- * variant (0171cf56...). These ports are not hardware validated yet; keep the
- * tables byte-exact until matching sensors are tested.
+ * variant (0171cf56...). SP0828 is now hardware validated; keep the remaining
+ * unvalidated tables byte-exact until matching sensors are tested.
  */
 
 /* XR872 SDK VGA sequence, with reset and delay control pairs prepended. */

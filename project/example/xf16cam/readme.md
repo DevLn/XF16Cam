@@ -30,13 +30,15 @@ single-client RTSP stream without PSRAM or an SD card.
   and PCMU workers detect a closed browser without waiting for TCP retries.
 - PA15 short-press switches Web/RTSP mode; PA20 held for three seconds restores
   the setup AP. PA21 blinks during startup and stays on when services are ready.
-- An optional one-bit SD card can be mounted and inspected from the web page.
-  The page reports total/free space and can explicitly format a card as FAT32.
+- An optional one-bit SD card can be mounted, inspected, and safely ejected from
+  the web page. Camera and storage share the PA23 rail through reference-counted
+  ownership; the page reports total/free space and can explicitly format FAT32.
 - Transport: RTP/JPEG (RFC 2435) interleaved over RTSP/TCP
 - RTSP input is framed across fragmented/coalesced TCP reads, rejects unsupported
   transports, accepts case-insensitive RTSP header/transport tokens, and applies
   bounded connection and send waits.
-- Image: 320 x 240, JPEG quality 60
+- Image: 320 x 240 for the landscape sensors, or SP0828 portrait 240 x 320;
+  JPEG quality 60
 - Sensor probing and driver dispatch use a small descriptor registry and one
   register-table backend; adding a compatible sensor does not require changes
   to the shared camera core.
@@ -54,7 +56,7 @@ single-client RTSP stream without PSRAM or an SD card.
 - SP0A20 (`0x2b`): factory HQT6 VGA table, hardware half-scaled to QVGA;
   compiled but awaiting matching-sensor validation.
 - SP0828 (`0x0c`): factory FTY/X5/X6 24 MHz portrait table at 240 x 320;
-  compiled but awaiting matching-sensor validation.
+  hardware validated on XF16.
 
 The Taixin-derived tables are deliberately limited to byte-exact sequences
 corroborated by the supplied factory-firmware research bundle. The alternative
@@ -75,9 +77,9 @@ The 105,692-byte capture arena is the checked worst-case bound for two aligned
 50 KiB JPEG buffers and contains no YUV framebuffer.
 Frames are acquired one at a time so a slow network client cannot race the
 hardware encoder and observe a buffer while it is being overwritten.
-The camera rail/capture arena and AMIC are demand-driven: boot probes the sensor
-for diagnostics, then media hardware remains idle until the relevant media track
-is requested and streaming starts; it is released again when the client leaves.
+The shared PA23 camera/SD rail, capture arena, and AMIC are demand-driven: boot
+probes the sensor, then releases resources. Camera and mounted storage hold
+separate rail references; ejecting the card permits power-down when media is idle.
 XF16Cam owns camera power, CSI/JPEG, and its media listeners; the SDK platform
 starts the underlying Wi-Fi/lwIP services. `PRJCONF_CONSOLE_EN` remains enabled
 for serial recovery and reflashing.
@@ -161,7 +163,10 @@ No reliable charger-status GPIO has been found, and PA21 is the status LED.
 The System tab can take an explicit raw/approximate millivolt reading from
 PA16 and can enter hibernation on request; PA20 is configured as its falling-edge
 wake source. Charging state remains unknown. XF16Cam deliberately does not yet
-estimate battery percentage or sleep automatically. A missing battery can produce a zero, floating, or
+estimate battery percentage or sleep automatically. The ADC display uses the
+median of eleven conversions: hardware testing found occasional analogue
+outliers while Wi-Fi, camera and AMIC were active, whereas the median tracked
+the attached battery consistently. A missing battery can produce a zero, floating, or
 charger-regulated ADC value, so copying the factory cutoff before calibration
 could make USB-powered devices repeatedly hibernate. The safe implementation
 order is:

@@ -12,6 +12,7 @@ typedef struct {
 int xf16cam_storage_init(void);
 int xf16cam_storage_refresh(void);
 int xf16cam_storage_format(void);
+int xf16cam_storage_unmount(void);
 const XF16CamStorageInfo *xf16cam_storage_info(void);
 
 #endif

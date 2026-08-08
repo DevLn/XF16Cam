@@ -28,6 +28,7 @@
 #include "xf16cam_http.h"
 #include "xf16cam_media.h"
 #include "xf16cam_net.h"
+#include "xf16cam_rail.h"
 #include "xf16cam_rtsp_parser.h"
 #include "xf16cam_sensor.h"
 #include "xf16cam_storage.h"
@@ -55,9 +56,6 @@ _Static_assert(JPEG_SRAM_SIZE >= JPEG_BUFFER_COUNT *
 #define XF16_SENSOR_I2C_ID       I2C0_ID
 #define XF16_CTRL_PORT           GPIO_PORT_A
 #define XF16_CTRL_PIN            GPIO_PIN_14
-#define XF16_FACTORY_PA23_PORT    GPIO_PORT_A
-#define XF16_FACTORY_PA23_PIN     GPIO_PIN_23
-#define XF16_FACTORY_PA23_PULSE_MS (100)
 #define XF16_SAME_PIN_PWR(_port, _pin) \
 	{ \
 		.Reset_Port = (_port), \
@@ -68,12 +66,11 @@ _Static_assert(JPEG_SRAM_SIZE >= JPEG_BUFFER_COUNT *
 
 static void xf16_release_camera_wakeup_hold(void);
 static void xf16_camera_ctrl_prehold_low(void);
-static void xf16_factory_pa23_prepare(void);
+static int xf16_board_camera_power_prepare(void);
 static void xf16_board_camera_power_down(void);
 
 static uint8_t *gmemaddr;
 static CAMERA_Mgmt mem_mgmt;
-static int g_camera_rail_on;
 static OS_Mutex_t g_camera_lock;
 static int g_camera_lock_ready;
 static int g_camera_initialized;
@@ -127,40 +124,20 @@ static void xf16_camera_ctrl_prehold_low(void)
 }
 
 __xip_text
-static void xf16_factory_pa23_prepare(void)
-{
-	GPIO_InitParam param;
-
-	param.driving = GPIO_DRIVING_LEVEL_1;
-	param.mode = GPIOx_Pn_F1_OUTPUT;
-	param.pull = GPIO_PULL_NONE;
-	HAL_GPIO_Init(XF16_FACTORY_PA23_PORT, XF16_FACTORY_PA23_PIN, &param);
-	HAL_GPIO_WritePin(XF16_FACTORY_PA23_PORT, XF16_FACTORY_PA23_PIN, GPIO_PIN_LOW);
-	OS_MSleep(XF16_FACTORY_PA23_PULSE_MS);
-	HAL_GPIO_WritePin(XF16_FACTORY_PA23_PORT, XF16_FACTORY_PA23_PIN, GPIO_PIN_HIGH);
-	g_camera_rail_on = 1;
-}
-
 __xip_text
-static void xf16_board_camera_power_prepare(void)
+static int xf16_board_camera_power_prepare(void)
 {
-	HAL_PRCM_SelectEXTLDOVolt(PRCM_EXT_LDO_3V3);
-	HAL_PRCM_SetEXTLDOMode(PRCM_EXTLDO_ALWAYS_ON);
-	HAL_PRCM_SetTOPLDOVoltage(PRCM_TOPLDO_VOLT_2V8);
-	OS_MSleep(20);
+	if (xf16cam_rail_acquire() != 0)
+		return -1;
 	xf16_release_camera_wakeup_hold();
-	xf16_factory_pa23_prepare();
 	xf16_camera_ctrl_prehold_low();
+	return 0;
 }
 
 __xip_text
 static void xf16_board_camera_power_down(void)
 {
-	if (!g_camera_rail_on)
-		return;
-	HAL_GPIO_WritePin(XF16_FACTORY_PA23_PORT, XF16_FACTORY_PA23_PIN, GPIO_PIN_LOW);
-	g_camera_rail_on = 0;
-	printf("xf16cam camera rail: PA23 off\n");
+	xf16cam_rail_release();
 }
 
 /* Fixed, bounded JPEG capture arena. */
@@ -250,7 +227,8 @@ static int xf16cam_camera_manager_init(void)
 	if (OS_MutexCreate(&g_camera_lock) != OS_OK)
 		return -1;
 	g_camera_lock_ready = 1;
-	xf16_board_camera_power_prepare();
+	if (xf16_board_camera_power_prepare() != 0)
+		return -1;
 	if (camera_init() != 0) {
 		camera_mem_destroy();
 		xf16_board_camera_power_down();
@@ -269,7 +247,8 @@ static int xf16cam_camera_acquire(void)
 	    OS_MutexLock(&g_camera_lock, OS_WAIT_FOREVER) != OS_OK)
 		return -1;
 	if (!g_camera_initialized) {
-		xf16_board_camera_power_prepare();
+		if (xf16_board_camera_power_prepare() != 0)
+			goto out;
 		if (camera_init() != 0) {
 			camera_mem_destroy();
 			xf16_board_camera_power_down();
@@ -1014,6 +993,8 @@ int main(void)
 
 	platform_init();
 	printf("xf16cam version %s\n", XF16CAM_VERSION);
+	if (xf16cam_rail_init() != 0)
+		printf("xf16cam media rail: initialization failed\n");
 
 	/* Probe once so management can report the sensor, then release the rail and
 	 * capture arena after services start. Stream clients reacquire both. */

@@ -12,9 +12,10 @@
 
 #include "xf16cam_board.h"
 #include "xf16cam_power.h"
+#include "xf16cam_storage.h"
 
 #define XF16CAM_BATTERY_CHANNEL       ADC_CHANNEL_6
-#define XF16CAM_BATTERY_SAMPLES       (10U)
+#define XF16CAM_BATTERY_SAMPLES       (11U)
 #define XF16CAM_BATTERY_FULL_SCALE_MV (4250U)
 #define XF16CAM_WAKE_IO_PA20          (6U)
 
@@ -23,11 +24,8 @@ static XF16CamPowerInfo g_power;
 int xf16cam_power_measure(void)
 {
 	ADC_InitParam param;
-	uint32_t sum = 0;
-	uint32_t minimum = 0xfff;
-	uint32_t maximum = 0;
+	uint16_t samples[XF16CAM_BATTERY_SAMPLES];
 	uint32_t sample;
-	uint32_t average;
 	unsigned int i;
 
 	memset(&param, 0, sizeof(param));
@@ -42,18 +40,26 @@ int xf16cam_power_measure(void)
 			HAL_ADC_DeInit();
 			goto fail;
 		}
-		sample &= 0xfff;
-		if (sample < minimum)
-			minimum = sample;
-		if (sample > maximum)
-			maximum = sample;
-		sum += sample;
+		samples[i] = (uint16_t)(sample & 0xfff);
 	}
 	HAL_ADC_DeInit();
-	average = (sum - minimum - maximum) / (XF16CAM_BATTERY_SAMPLES - 2U);
-	g_power.raw = (uint16_t)average;
+	/* Wi-Fi and the analogue microphone can occasionally disturb one ADC
+	 * conversion. An in-place insertion sort gives a robust median without
+	 * adding heap use or a generic sorting-library dependency. */
+	for (i = 1; i < XF16CAM_BATTERY_SAMPLES; ++i) {
+		uint16_t value = samples[i];
+		unsigned int j = i;
+
+		while (j > 0 && samples[j - 1] > value) {
+			samples[j] = samples[j - 1];
+			--j;
+		}
+		samples[j] = value;
+	}
+	g_power.raw = samples[XF16CAM_BATTERY_SAMPLES / 2U];
 	/* Factory divider is approximately 1.7:1: raw * 2500/4096 * 17/10. */
-	g_power.millivolts = (uint16_t)((average * XF16CAM_BATTERY_FULL_SCALE_MV + 2048U) / 4096U);
+	g_power.millivolts = (uint16_t)(((uint32_t)g_power.raw *
+	                                XF16CAM_BATTERY_FULL_SCALE_MV + 2048U) / 4096U);
 	g_power.valid = 1;
 	printf("xf16cam battery: raw=%u approximate=%u mV (uncalibrated)\n",
 	       g_power.raw, g_power.millivolts);
@@ -78,6 +84,8 @@ void xf16cam_power_hibernate(void)
 		.pull = GPIO_PULL_UP,
 	};
 
+	if (xf16cam_storage_unmount() != 0)
+		printf("xf16cam power: SD eject failed before hibernation\n");
 	xf16cam_board_prepare_sleep();
 	HAL_GPIO_Init(GPIO_PORT_A, GPIO_PIN_20, &input);
 	HAL_PRCM_SetWakeupDebClk0(0);

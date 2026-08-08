@@ -387,6 +387,8 @@ static void xf16cam_http_page(int fd)
 		                  "<b>Free space</b><span>%lu MiB</span></div>",
 		                  (unsigned long)storage->total_mb, (unsigned long)storage->free_mb);
 		xf16cam_http_send_all(fd, dynamic, length);
+		XF16CAM_HTTP_SEND_LITERAL(fd,
+		                  "<form method=post action=/api/sd/eject><button type=submit>Safely eject</button></form>");
 	} else {
 		XF16CAM_HTTP_SEND_LITERAL(fd, "Not checked</span></div>");
 	}
@@ -394,7 +396,7 @@ static void xf16cam_http_page(int fd)
 	                  "<form method=post action=/api/sd/refresh><button type=submit>Check card</button></form>"
 	                  "<form method=post action=/api/sd/format onsubmit=\"return confirm('Erase and format the SD card?')\">"
 	                  "<button type=submit>Format FAT32</button></form>"
-	                  "<small>Formatting permanently erases the card.</small></section></div>"
+	                  "<small>Formatting permanently erases the card. Ejecting lets the shared PA23 camera/SD rail power down while idle.</small></section></div>"
 	                  "<div id=system class=panel><section class=card><h2>Device</h2><div class=grid>");
 	length = snprintf(dynamic, sizeof(dynamic),
 	                  "<b>Network mode</b><span>%s</span><b>IP address</b><span>%s</span>"
@@ -428,7 +430,7 @@ static void xf16cam_http_page(int fd)
 	                  "<b>Camera control</b><span>PA14</span>"
 	                  "<b>Status LED</b><span>PA21</span>"
 	                  "<b>Battery sense</b><span>PA16 / ADC6</span>"
-	                  "<b>Camera power rail</b><span>PA23</span>"
+	                  "<b>Camera / SD power rail</b><span>PA23</span>"
 	                  "<b>SD card</b><span>PB16 CMD, PB17 D0, PB18 CLK</span>"
 	                  "<b>Console</b><span>PB0 TX, PB1 RX</span>"
 	                  "<b>SPI flash</b><span>PB2-PB7</span>"
@@ -891,6 +893,11 @@ static int xf16cam_http_handle(int fd)
 			xf16cam_http_message(fd, "503 Service Unavailable", "No readable FAT SD card was found.");
 		else
 			xf16cam_http_message(fd, "200 OK", "SD card mounted. Return to the main page for capacity details.");
+	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/sd/eject") == 0) {
+		if (xf16cam_storage_unmount() != 0)
+			xf16cam_http_message(fd, "500 Internal Server Error", "SD card eject failed.");
+		else
+			xf16cam_http_message(fd, "200 OK", "SD card safely ejected.");
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/sd/format") == 0) {
 		if (xf16cam_storage_format() != 0)
 			xf16cam_http_message(fd, "500 Internal Server Error", "SD card formatting failed.");
@@ -933,6 +940,11 @@ static void xf16cam_http_task(void *arg)
 		closesocket(client);
 		if (action != XF16CAM_HTTP_KEEP_RUNNING) {
 			OS_MSleep(750);
+			/* All HTTP-triggered restarts pass through this task. Unmount here,
+			 * after the response has reached the client, so configuration, media
+			 * mode and OTA restarts cannot leave a mounted card dirty. */
+			if (xf16cam_storage_unmount() != 0)
+				printf("xf16cam HTTP: SD eject failed before restart\n");
 			if (action == XF16CAM_HTTP_OTA_REBOOT)
 				ota_reboot();
 			if (action == XF16CAM_HTTP_HIBERNATE) {
