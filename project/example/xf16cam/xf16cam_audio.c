@@ -10,6 +10,7 @@
 
 #include "xf16cam_audio.h"
 #include "xf16cam_config.h"
+#include "xf16cam_media.h"
 
 #define XF16CAM_AUDIO_RATE          (8000)
 #define XF16CAM_AUDIO_RING_PACKETS  (8)
@@ -143,17 +144,20 @@ static void xf16cam_audio_task(void *arg)
 			continue;
 		}
 		if (warmup_packets > 0) {
+			/* Preserve the 8 kHz media clock while suppressing the analogue
+			 * startup transient. PCMU 0xff is zero-level silence. */
+			memset(slot->pcmu, 0xff, sizeof(slot->pcmu));
 			if (--warmup_packets == 0)
-				printf("xf16cam audio: AMIC settled, PCMU/8000 publishing\n");
-			continue;
-		}
-		for (i = 0; i < XF16CAM_AUDIO_SAMPLES_PER_PACKET; ++i) {
-			uint16_t magnitude = pcm[i] == INT16_MIN ? 32768U :
-			                     (uint16_t)(pcm[i] < 0 ? -pcm[i] : pcm[i]);
-			if (magnitude > peak)
-				peak = magnitude;
-			total += magnitude;
-			slot->pcmu[i] = xf16cam_mulaw(pcm[i]);
+				printf("xf16cam audio: AMIC settled, live PCMU/8000 audio\n");
+		} else {
+			for (i = 0; i < XF16CAM_AUDIO_SAMPLES_PER_PACKET; ++i) {
+				uint16_t magnitude = pcm[i] == INT16_MIN ? 32768U :
+				                     (uint16_t)(pcm[i] < 0 ? -pcm[i] : pcm[i]);
+				if (magnitude > peak)
+					peak = magnitude;
+				total += magnitude;
+				slot->pcmu[i] = xf16cam_mulaw(pcm[i]);
+			}
 		}
 		slot->timestamp = packet * XF16CAM_AUDIO_SAMPLES_PER_PACKET;
 		slot->generation = packet + 1;
@@ -220,7 +224,7 @@ static void xf16cam_audio_http_task(void *arg)
 
 	if (xf16cam_audio_send_all(fd, header, sizeof(header) - 1) == 0) {
 		printf("xf16cam WEB audio: PCMU/8000 client connected\n");
-		while (!xf16cam_update_active()) {
+		while (!xf16cam_update_active() && xf16cam_media_client_connected(fd)) {
 			int ready = xf16cam_audio_read(&cursor, pcmu, &timestamp);
 			(void)timestamp;
 			if (ready > 0) {
@@ -232,10 +236,12 @@ static void xf16cam_audio_http_task(void *arg)
 		}
 	}
 	closesocket(fd);
-	g_audio_http_active = 0;
 	xf16cam_audio_release();
 	printf("xf16cam WEB audio client stopped\n");
-	OS_ThreadDelete(&g_audio_http_thread);
+	OS_ThreadSetInvalid(&g_audio_http_thread);
+	__sync_synchronize();
+	g_audio_http_active = 0;
+	OS_ThreadDelete(NULL);
 }
 
 int xf16cam_audio_http_start(int fd)

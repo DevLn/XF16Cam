@@ -35,6 +35,7 @@
 #define XF16CAM_HTTP_STACK_SIZE   (3 * 1024)
 #define XF16CAM_OTA_MAX_SIZE      (372 * 1024)
 #define XF16CAM_HTTP_TIMEOUT_MS   (15000)
+#define XF16CAM_HTTP_HEADER_MS    (5000)
 #define XF16CAM_OTA_QUIESCE_MS    (10000U)
 #define XF16CAM_OTA_UPLOAD_MS     (180000U)
 
@@ -152,8 +153,8 @@ __xip_rodata static const char g_page_head[] =
 	"grid-template-columns:max-content 1fr;gap:7px 14px}.grid b{color:#43515e}form{margin:8px 0}label{display:block;margin:8px 0}"
 	"input,button{font:inherit;min-height:44px;padding:9px 11px;margin:4px 0;border:1px solid #b9c5cd;border-radius:7px}input{width:100%;background:#fff;font-size:16px}"
 	"button{background:#f7f9fa}button.primary{background:var(--brand);border-color:var(--brand);color:#fff}"
-	"small{color:var(--muted)}a{color:#096b99}.rtsp{overflow-wrap:anywhere}.nets{display:grid;gap:7px;margin:10px 0}.net{width:100%;display:flex;"
-	"align-items:center;justify-content:space-between;text-align:left;margin:0;background:#fff}.net.sel{border-color:var(--brand);"
+	"small{color:var(--muted)}a{color:#096b99}.rtsp{overflow-wrap:anywhere}.nets{display:grid;gap:7px;margin:10px 0}.net{width:100%;display:flex;gap:10px;"
+	"align-items:center;justify-content:space-between;text-align:left;margin:0;background:#fff}.net span:first-child{min-width:0;overflow-wrap:anywhere}.net span:last-child{flex:none;white-space:nowrap}.net.sel{border-color:var(--brand);"
 	"box-shadow:0 0 0 2px #176b5b33;background:#f3faf8}.net.empty{justify-content:center;color:var(--muted)}@media(max-width:680px){header{align-items:flex-start}.panel.on{grid-template-columns:1fr}"
 	".wide{grid-column:auto}.screen{min-height:180px}.grid{grid-template-columns:1fr}.grid b{margin-top:5px}}</style></head><body>";
 
@@ -310,7 +311,7 @@ static void xf16cam_http_page(int fd)
 	if (config->media_mode == XF16CAM_MEDIA_WEB) {
 		if (camera_available)
 			XF16CAM_HTTP_SEND_LITERAL(fd,
-			                  "<img id=video src=/stream.mjpeg alt='Live camera'></div>");
+			                  "<img id=video alt='Live camera'></div>");
 		else
 			XF16CAM_HTTP_SEND_LITERAL(fd,
 				                  "<div class=empty><b>Camera unavailable</b><p>Connect a sensor and reboot.</p></div></div>");
@@ -331,19 +332,21 @@ static void xf16cam_http_page(int fd)
 		                  "<script>let a,r,n=0;function u(v){let x=(~v)&255,t=((x&15)<<3)+132;"
 		                  "t<<=(x&112)>>4;return((x&128)?132-t:t-132)/32768}async function toggleAudio(){"
 		                  "let b=document.querySelector('#listen'),s=document.querySelector('#audioState');"
-		                  "if(a){if(r)await r.cancel();await a.close();a=r=null;b.textContent='Listen';s.textContent='Audio stopped';return}"
-		                  "try{a=new AudioContext;await a.resume();let f=await fetch('/stream.pcmu');if(!f.ok||!f.body)throw 0;r=f.body.getReader();"
-		                  "b.textContent='Stop audio';s.textContent='Listening';n=a.currentTime+.15;while(a){let x=await r.read();"
-		                  "if(x.done)break;let q=a.createBuffer(1,x.value.length,8000),d=q.getChannelData(0);"
+		                  "if(a){let c=a,q=r;a=r=null;b.disabled=true;try{if(q)await q.cancel()}catch(e){}"
+		                  "try{await c.close()}catch(e){}b.disabled=false;b.textContent='Listen';s.textContent='Audio stopped';return}"
+		                  "let c;try{c=new AudioContext;a=c;await c.resume();let f=await fetch('/stream.pcmu');if(!f.ok||!f.body)throw 0;"
+		                  "let p=f.body.getReader();if(a!==c){await p.cancel();return}r=p;b.textContent='Stop audio';s.textContent='Listening';"
+		                  "n=c.currentTime+.15;while(a===c){let x=await p.read();if(x.done||a!==c)break;let q=c.createBuffer(1,x.value.length,8000),d=q.getChannelData(0);"
 		                  "for(let i=0;i<d.length;i++)d[i]=u(x.value[i]);let o=a.createBufferSource();o.buffer=q;o.connect(a.destination);"
-		                  "let t=Math.max(n,a.currentTime+.04);o.start(t);n=t+q.duration}if(a)await a.close();a=r=null;"
-		                  "b.textContent='Listen';s.textContent='Audio stopped'}catch(e){s.textContent='Audio connection failed';"
-		                  "if(a)await a.close();a=r=null;b.textContent='Listen'}}</script>");
+		                  "let t=Math.max(n,a.currentTime+.04);o.start(t);n=t+q.duration}"
+		                  "if(a===c){a=r=null;b.textContent='Listen';s.textContent='Audio stopped';try{await c.close()}catch(e){}}}"
+		                  "catch(e){if(a===c){a=r=null;b.textContent='Listen';s.textContent='Audio connection failed';"
+		                  "try{if(c)await c.close()}catch(e){}}}}</script>");
 	}
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<form method=post action=/api/media>"
-	                  "<button name=mode value=web onclick=\"let v=document.querySelector('#video');if(v)v.src=''\">Browser video</button> "
-	                  "<button name=mode value=rtsp onclick=\"let v=document.querySelector('#video');if(v)v.src=''\">RTSP</button></form>"
+	                  "<button name=mode value=web onclick='videoStop(1)'>Browser video</button> "
+	                  "<button name=mode value=rtsp onclick='videoStop(1)'>RTSP</button></form>"
 	                  "<small>Changing mode reboots.</small></section>"
 	                  "<nav class=tabs><button type=button data-tab=live onclick=tab('live')>Live</button>"
 	                  "<button type=button data-tab=network onclick=tab('network')>Network</button>"
@@ -372,7 +375,8 @@ static void xf16cam_http_page(int fd)
 	xf16cam_http_send_escaped(fd, (const uint8_t *)config->ssid, strlen(config->ssid), 0);
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "\"></label>"
-	                  "<label>Password<input type=password name=password maxlength=63 autocomplete=new-password></label>"
+	                  "<label>Password<input type=password name=password maxlength=63 autocomplete=new-password>"
+	                  "<small>Blank keeps the saved password for the current SSID, or joins a new open network.</small></label>"
 	                  "<button class=primary type=submit>Save and reboot</button></form>"
 	                  "<form method=post action=/api/ap><button type=submit>Return to setup AP</button></form></section></div>"
 	                  "<div id=storage class=panel><section class='card wide'><h2>SD card</h2><div class=grid>"
@@ -447,8 +451,12 @@ static void xf16cam_http_page(int fd)
 	                  "<small>Approximate; no auto cutoff.</small></section>");
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<section class='card wide'><h2>Firmware update</h2><p>Choose an OTA image and keep power connected.</p>"
-	                  "<input id=ota type=file accept=.img><button class=primary type=button onclick=update()>Install update</button> <span id=up aria-live=polite></span></section></div>"
-	                  "<script>let D=document,$=s=>D.querySelector(s),A=s=>D.querySelectorAll(s);function tab(id){A('.panel').forEach(e=>e.classList.toggle('on',e.id==id));"
+	                  "<input id=ota type=file accept=.img><button id=otaInstall class=primary type=button onclick=update()>Install update</button> <span id=up aria-live=polite></span></section></div>"
+	                  "<script>let D=document,$=s=>D.querySelector(s),A=s=>D.querySelectorAll(s),vt,vh=0;"
+	                  "function videoStop(h){if(h)vh=1;clearTimeout(vt);let v=$('#video');if(v)v.removeAttribute('src')}"
+	                  "function videoStart(){let v=$('#video');if(!v||vh||D.hidden)return;clearTimeout(vt);v.src='/stream.mjpeg'}"
+	                  "function videoRetry(){clearTimeout(vt);if(!vh&&!D.hidden)vt=setTimeout(videoStart,1500)}"
+	                  "function tab(id){A('.panel').forEach(e=>e.classList.toggle('on',e.id==id));"
 	                  "A('.tabs button').forEach(e=>{let on=e.dataset.tab==id;e.classList.toggle('on',on);e.setAttribute('aria-selected',on)})}"
 	                  "function clearNet(){A('.net').forEach(e=>e.classList.remove('sel'))}"
 	                  "function pickNet(b){$('#ssid').value=b.dataset.ssid;clearNet();b.classList.add('sel');"
@@ -462,13 +470,14 @@ static void xf16cam_http_page(int fd)
 	                  "catch(e){s.textContent='Scan failed';d.innerHTML='<div class=\"net empty\">Try scanning again</div>'}finally{b.disabled=false}}"
 	                  "async function measurePower(){let b=$('#battery');b.textContent='Measuring...';try{let r=await fetch('/api/power',{method:'POST'});"
 	                  "if(!r.ok)throw 0;let p=await r.json();b.textContent=p.millivolts+' mV (raw '+p.raw+', approx.)'}catch(e){b.textContent='Measurement failed'}}"
-	                  "async function update(){let f=$('#ota').files[0],s=$('#up');"
+	                  "async function update(){let f=$('#ota').files[0],s=$('#up'),b=$('#otaInstall');if(b.disabled)return;"
 	                  "if(!f){s.textContent='Choose a file';return}if(!confirm('Install '+f.name+' and reboot?'))return;"
-	                  "s.textContent='Uploading...';try{let r=await fetch('/api/ota',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});"
-	                  "s.textContent=await r.text()}catch(e){s.textContent='Connection closed; check for reboot'}}"
+	                  "b.disabled=true;videoStop(1);s.textContent='Uploading...';let ok=false;try{let r=await fetch('/api/ota',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f}),t=await r.text();"
+	                  "ok=r.ok;s.textContent=ok?t:'Update failed (HTTP '+r.status+')'}catch(e){s.textContent='Connection closed; check for reboot'}finally{b.disabled=false;if(!ok){vh=0;videoStart()}}}"
 	                  "async function meter(){if(!D.hidden&&$('#live').classList.contains('on'))try{"
 	                  "let a=await(await fetch('/api/audio')).json(),m=$('#mic');if(m)m.textContent=a.peak}catch(e){}setTimeout(meter,2000)}"
-	                  "D.addEventListener('visibilitychange',()=>{let v=$('#video');if(v)v.src=D.hidden?'':'/stream.mjpeg'});"
+	                  "let v=$('#video');if(v){v.onerror=videoRetry;videoStart()}"
+	                  "D.addEventListener('visibilitychange',()=>D.hidden?videoStop():videoStart());"
 	                  "tab('live');meter()</script></main></body></html>");
 }
 
@@ -757,7 +766,7 @@ static int xf16cam_http_handle(int fd)
 	while (received < (int)sizeof(g_request) - 1) {
 		int count = xf16cam_http_recv_deadline(fd, g_request + received,
 		                                         sizeof(g_request) - 1 - received,
-		                                         request_start, XF16CAM_HTTP_TIMEOUT_MS);
+		                                         request_start, XF16CAM_HTTP_HEADER_MS);
 		if (count <= 0)
 			return 0;
 		received += count;
@@ -825,9 +834,21 @@ static int xf16cam_http_handle(int fd)
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/power") == 0) {
 		xf16cam_http_power_json(fd);
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/wifi") == 0) {
-		if (xf16cam_form_value(body, "ssid", ssid, sizeof(ssid)) != 0 ||
-		    xf16cam_form_value(body, "password", psk, sizeof(psk)) != 0 ||
-		    xf16cam_config_save_sta(ssid, psk) != 0) {
+		int invalid = xf16cam_form_value(body, "ssid", ssid, sizeof(ssid)) != 0 ||
+		              xf16cam_form_value(body, "password", psk, sizeof(psk)) != 0;
+
+		if (!invalid) {
+			const XF16CamConfig *current = xf16cam_config_get();
+
+			/* A blank password for the currently saved secured SSID means
+			 * "unchanged". A different SSID with a blank password remains a
+			 * deliberate request to join an open network. */
+			if (psk[0] == '\0' && current->wifi_mode == XF16CAM_WIFI_STA &&
+			    current->psk[0] != '\0' && strcmp(ssid, current->ssid) == 0)
+				memcpy(psk, current->psk, sizeof(psk));
+			invalid = xf16cam_config_save_sta(ssid, psk) != 0;
+		}
+		if (invalid) {
 			xf16cam_http_message(fd, "400 Bad Request",
 			                     "Invalid SSID or password. WPA passwords must contain 8 to 63 characters.");
 			return 0;

@@ -6,6 +6,7 @@
 #include "driver/chip/hal_adc.h"
 #include "driver/chip/hal_gpio.h"
 #include "driver/chip/hal_prcm.h"
+#include "driver/chip/hal_wdg.h"
 #include "driver/chip/hal_wakeup.h"
 #include "pm/pm.h"
 
@@ -85,5 +86,13 @@ void xf16cam_power_hibernate(void)
 	HAL_Wakeup_SetIO(XF16CAM_WAKE_IO_PA20, WKUPIO_WK_MODE_FALLING_EDGE,
 	                 GPIO_PULL_UP);
 	printf("xf16cam power: entering hibernation; press PA20 to wake\n");
-	pm_enter_mode(PM_MODE_HIBERNATION);
+	if (pm_enter_mode(PM_MODE_HIBERNATION) != 0)
+		printf("xf16cam power: hibernation failed; rebooting\n");
+	else
+		printf("xf16cam power: hibernation returned unexpectedly; rebooting\n");
+	/* A successful XR872 hibernation never returns and wakes through a cold
+	 * boot. Recover the same way if platform PM rejects or exits the request;
+	 * media and board services have already been quiesced by this point. */
+	HAL_PRCM_SetCPUABootFlag(PRCM_CPUA_BOOT_FROM_COLD_RESET);
+	HAL_WDG_Reboot();
 }

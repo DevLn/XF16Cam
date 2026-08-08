@@ -39,11 +39,19 @@ static int xf16cam_net_start_ap(void)
 
 	printf("xf16cam Wi-Fi: starting AP ssid=%s ip=%s\n",
 	       XF16CAM_AP_SSID, XF16CAM_AP_IP);
-	net_switch_mode(WLAN_MODE_HOSTAP);
-	wlan_ap_disable();
-	wlan_ap_set((uint8_t *)XF16CAM_AP_SSID, strlen(XF16CAM_AP_SSID),
-	            (uint8_t *)XF16CAM_AP_PSK);
-	wlan_ap_enable();
+	if (net_switch_mode(WLAN_MODE_HOSTAP) != 0) {
+		printf("xf16cam Wi-Fi: AP mode switch failed\n");
+		return -1;
+	}
+	/* A freshly created interface can already be disabled. Configuration and
+	 * enable failures are authoritative; disable is intentionally best-effort. */
+	(void)wlan_ap_disable();
+	if (wlan_ap_set((uint8_t *)XF16CAM_AP_SSID, strlen(XF16CAM_AP_SSID),
+	                (uint8_t *)XF16CAM_AP_PSK) != 0 ||
+	    wlan_ap_enable() != 0) {
+		printf("xf16cam Wi-Fi: AP configuration failed\n");
+		return -1;
+	}
 	if (xf16cam_net_wait(5000) != 0)
 		return -1;
 
@@ -51,7 +59,10 @@ static int xf16cam_net_start_ap(void)
 	inet_aton("255.255.255.0", &netmask);
 	inet_aton(XF16CAM_AP_IP, &gateway);
 	dhcp_server_stop();
-	netifapi_netif_set_addr(g_wlan_netif, &ip, &netmask, &gateway);
+	if (netifapi_netif_set_addr(g_wlan_netif, &ip, &netmask, &gateway) != ERR_OK) {
+		printf("xf16cam Wi-Fi: AP address setup failed\n");
+		return -1;
+	}
 
 	dhcp.addr_start = inet_addr(XF16CAM_DHCP_IP);
 	dhcp.addr_end = inet_addr(XF16CAM_DHCP_IP);
@@ -68,11 +79,17 @@ __xip_text
 static int xf16cam_net_start_sta(const XF16CamConfig *config)
 {
 	printf("xf16cam Wi-Fi: starting STA ssid=%s\n", config->ssid);
-	net_switch_mode(WLAN_MODE_STA);
-	wlan_sta_disable();
-	wlan_sta_set((uint8_t *)config->ssid, strlen(config->ssid),
-	             (uint8_t *)config->psk);
-	wlan_sta_enable();
+	if (net_switch_mode(WLAN_MODE_STA) != 0) {
+		printf("xf16cam Wi-Fi: STA mode switch failed\n");
+		return -1;
+	}
+	(void)wlan_sta_disable();
+	if (wlan_sta_set((uint8_t *)config->ssid, strlen(config->ssid),
+	                 (uint8_t *)config->psk) != 0 ||
+	    wlan_sta_enable() != 0) {
+		printf("xf16cam Wi-Fi: STA configuration failed\n");
+		return -1;
+	}
 	if (xf16cam_net_wait(XF16CAM_STA_TIMEOUT_MS) != 0) {
 		printf("xf16cam Wi-Fi: STA timeout, falling back to setup AP\n");
 		return -1;

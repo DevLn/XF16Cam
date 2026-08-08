@@ -10,6 +10,8 @@ single-client RTSP stream without PSRAM or an SD card.
 - OTA has been validated end-to-end on XR872 hardware, including retained Wi-Fi
   settings, camera reprobe, audio restart, and management-page recovery.
 - Saved settings use a dedicated FDCM sector and survive firmware reflashing.
+- Leaving the password blank for the currently saved secured SSID preserves
+  that credential; a blank password for a different SSID selects an open network.
 - A failed STA connection falls back to the setup AP.
 - Serial recovery: `wifi ap` or `wifi sta <ssid> <password>` saves the same
   configuration as the web page and reboots without exposing the password.
@@ -22,8 +24,10 @@ single-client RTSP stream without PSRAM or an SD card.
   SDK-cached boot cause, and XR872 die temperature.
 - Runtime diagnostics retain the minimum spare stack values for the HTTP,
   audio, and board workers.
-- Demand-started AMIC capture discards its 2.1-second analogue settling period
-  before publishing browser or RTSP audio.
+- Demand-started AMIC capture publishes PCMU silence during its 2.1-second
+  analogue settling period, preserving the media clock before live samples.
+- Browser MJPEG reconnects after a transient failure, and transmit-only MJPEG
+  and PCMU workers detect a closed browser without waiting for TCP retries.
 - PA15 short-press switches Web/RTSP mode; PA20 held for three seconds restores
   the setup AP. PA21 blinks during startup and stays on when services are ready.
 - An optional one-bit SD card can be mounted and inspected from the web page.
@@ -72,8 +76,8 @@ The 105,692-byte capture arena is the checked worst-case bound for two aligned
 Frames are acquired one at a time so a slow network client cannot race the
 hardware encoder and observe a buffer while it is being overwritten.
 The camera rail/capture arena and AMIC are demand-driven: boot probes the sensor
-for diagnostics, then media hardware remains idle until a browser or RTSP client
-connects and is released again when the client leaves.
+for diagnostics, then media hardware remains idle until the relevant media track
+is requested and streaming starts; it is released again when the client leaves.
 XF16Cam owns camera power, CSI/JPEG, and its media listeners; the SDK platform
 starts the underlying Wi-Fi/lwIP services. `PRJCONF_CONSOLE_EN` remains enabled
 for serial recovery and reflashing.
