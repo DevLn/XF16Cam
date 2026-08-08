@@ -412,6 +412,7 @@ __xip_text
 static int xf16cam_capture_jpeg(CAMERA_JpegBuffInfo *info, uint8_t **jpeg,
 				uint32_t *jpeg_len)
 {
+	xf16cam_sensor_prepare_capture();
 	if (HAL_CAMERA_CaptureImage(CAMERA_OUT_JPEG, info, 1) != 0)
 		return -1;
 	if (info->buff_index >= JPEG_BUFFER_COUNT || info->size == 0 ||

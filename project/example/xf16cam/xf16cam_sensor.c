@@ -28,6 +28,7 @@ typedef struct {
 	uint8_t bank_value;
 	uint8_t id_register;
 	uint8_t id_value;
+	uint8_t clk_pol;
 	uint8_t power_cycle;
 	uint8_t delay_register[2];
 	uint8_t delay_value[2];
@@ -78,6 +79,7 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.bank_value = 0x00,
 		.id_register = 0x04,
 		.id_value = 0x96,
+		.clk_pol = CSI_POL_POSITIVE,
 		.table = xf16cam_hi704_table,
 		.table_size = XF16CAM_HI704_TABLE_SIZE,
 		.input_width = 640,
@@ -116,6 +118,18 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 };
 
 static const XF16CamSensor *g_selected;
+
+__xip_text
+void xf16cam_sensor_prepare_capture(void)
+{
+	uint32_t desired;
+
+	if (!g_selected)
+		return;
+	desired = (uint32_t)g_selected->clk_pol << CSI_CLK_POL_SHIFT;
+	if ((CSI->CSI_CFG_REG & CSI_CLK_POL_MASK) != desired)
+		HAL_MODIFY_REG(CSI->CSI_CFG_REG, CSI_CLK_POL_MASK, desired);
+}
 
 __xip_text
 static void xf16cam_sensor_control(const SENSOR_ConfigParam *cfg, GPIO_PinState state)
@@ -308,26 +322,32 @@ int xf16cam_sensor_configure_camera(uint16_t configured_width,
 
 	if (!g_selected)
 		return -1;
-	if (g_selected->input_width == configured_width &&
-	    g_selected->input_height == configured_height &&
-	    g_selected->output_width == configured_width &&
-	    g_selected->output_height == configured_height)
-		return 0;
+	if (g_selected->input_width != configured_width ||
+	    g_selected->input_height != configured_height ||
+	    g_selected->output_width != configured_width ||
+	    g_selected->output_height != configured_height) {
+		input.width = g_selected->input_width;
+		input.height = g_selected->input_height;
+		if (HAL_CAMERA_IoCtl(CAMERA_SET_PIXEL_SIZE, (uint32_t)&input) != 0 ||
+		    HAL_CAMERA_IoCtl(CAMERA_SET_JPEG_MODE, JPEG_MOD_ONLINE) != 0)
+			return -1;
 
-	input.width = g_selected->input_width;
-	input.height = g_selected->input_height;
-	if (HAL_CAMERA_IoCtl(CAMERA_SET_PIXEL_SIZE, (uint32_t)&input) != 0 ||
-	    HAL_CAMERA_IoCtl(CAMERA_SET_JPEG_MODE, JPEG_MOD_ONLINE) != 0)
-		return -1;
+		scale = g_selected->input_width != g_selected->output_width ||
+		        g_selected->input_height != g_selected->output_height;
+		if (scale) {
+			if (g_selected->input_width != g_selected->output_width * 2 ||
+			    g_selected->input_height != g_selected->output_height * 2 ||
+			    HAL_CAMERA_IoCtl(CAMERA_SET_JPEG_SCALE, 1) != 0)
+				return -1;
+		}
+	}
 
-	scale = g_selected->input_width != g_selected->output_width ||
-	        g_selected->input_height != g_selected->output_height;
-	if (!scale)
-		return 0;
-	if (g_selected->input_width != g_selected->output_width * 2 ||
-	    g_selected->input_height != g_selected->output_height * 2)
-		return -1;
-	return HAL_CAMERA_IoCtl(CAMERA_SET_JPEG_SCALE, 1);
+	/* Sensor PCLK sampling edges differ. Apply this after geometry ioctls,
+	 * which reconfigure CSI with the SDK default. */
+	xf16cam_sensor_prepare_capture();
+	printf("xf16cam camera: %s CSI clock polarity=%u\n",
+	       g_selected->name, (unsigned int)g_selected->clk_pol);
+	return 0;
 }
 
 const char *xf16cam_sensor_name(void)

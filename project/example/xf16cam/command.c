@@ -74,13 +74,18 @@ static void xf16cam_cmd_response(int status, int prompt)
 		console_write((uint8_t *)"$ ", 2);
 }
 
-static void xf16cam_cmd_reboot(PRCM_CPUABootFlag flag)
+static void __attribute__((noreturn)) xf16cam_cmd_upgrade(void)
 {
-	if (xf16cam_storage_unmount() != 0)
-		printf("xf16cam console: SD eject failed before reboot\n");
+	/* Keep the serial recovery path independent of media, storage, and
+	 * configuration state. A full UART update can repair any of them. */
 	xf16cam_cmd_response(0, 0);
-	HAL_PRCM_SetCPUABootFlag(flag);
+	OS_MSleep(10);
+	HAL_PRCM_SetCPUABootFlag(PRCM_CPUA_BOOT_FROM_SYS_UPDATE);
+	__DSB();
+	__ISB();
 	HAL_WDG_Reboot();
+	for (;;) {
+	}
 }
 
 static void xf16cam_cmd_wifi(char *args)
@@ -128,10 +133,7 @@ void main_cmd_exec(char *cmd)
 	if (name == NULL) {
 		console_write((uint8_t *)"$ ", 2);
 	} else if (strcmp(name, "upgrade") == 0 && xf16cam_cmd_arg(&cursor) == NULL) {
-		if (xf16cam_update_begin() != 0)
-			xf16cam_cmd_response(3, 1);
-		else
-			xf16cam_cmd_reboot(PRCM_CPUA_BOOT_FROM_SYS_UPDATE);
+		xf16cam_cmd_upgrade();
 	} else if (strcmp(name, "wifi") == 0) {
 		xf16cam_cmd_wifi(cursor);
 	} else {

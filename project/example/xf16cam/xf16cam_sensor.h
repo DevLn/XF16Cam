@@ -9,6 +9,7 @@ HAL_Status xf16cam_sensor_init(SENSOR_ConfigParam *cfg);
 void xf16cam_sensor_deinit(SENSOR_ConfigParam *cfg);
 int xf16cam_sensor_configure_camera(uint16_t configured_width,
 				    uint16_t configured_height);
+void xf16cam_sensor_prepare_capture(void);
 const char *xf16cam_sensor_name(void);
 int xf16cam_sensor_available(void);
 uint16_t xf16cam_sensor_width(void);

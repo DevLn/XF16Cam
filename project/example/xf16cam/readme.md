@@ -15,6 +15,8 @@ single-client RTSP stream without PSRAM or an SD card.
 - A failed STA connection falls back to the setup AP.
 - Serial recovery: `wifi ap` or `wifi sta <ssid> <password>` saves the same
   configuration as the web page and reboots without exposing the password.
+- The serial `upgrade` command is an unconditional last-resort BootROM handoff;
+  it remains available even if media, storage, or configuration state is stuck.
 - Stream: `rtsp://<device-ip>:8554/stream`
 - The responsive web console has Live, Network, Storage, and System tabs, with
   a focal embedded MJPEG view that can switch exclusively with RTSP mode.
@@ -51,8 +53,8 @@ single-client RTSP stream without PSRAM or an SD card.
 - GC0328 (`0x9d`): factory QVGA table, hardware validated on XF16.
 - GC0308 (`0x9b`): compacted XR872 SDK VGA table, hardware half-scaled to QVGA;
   compiled but awaiting matching-sensor validation.
-- HI704 (`0x96`): factory FTY/X5/X6 VGA table, hardware half-scaled to QVGA;
-  compiled but awaiting matching-sensor validation.
+- HI704 (`0x96`): factory FTY/X5/X6 VGA table, hardware validated on XF16 and
+  half-scaled to QVGA; its profile selects the sensor's required rising PCLK edge.
 - SP0A20 (`0x2b`): factory HQT6 VGA table, hardware half-scaled to QVGA;
   compiled but awaiting matching-sensor validation.
 - SP0828 (`0x0c`): factory FTY/X5/X6 24 MHz portrait table at 240 x 320;
