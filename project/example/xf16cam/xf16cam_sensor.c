@@ -13,6 +13,28 @@
 #define XF16CAM_SENSOR_WRITE_ATTEMPTS (4)
 
 typedef struct {
+	uint8_t input_seq;
+	uint8_t vref_pol;
+	uint8_t href_pol;
+	uint8_t clk_pol;
+	uint8_t sync_type;
+} XF16CamCsiProfile;
+
+/* Match camera.c unless a sensor descriptor explicitly says otherwise. */
+#define XF16CAM_CSI_PROFILE(_seq, _vref, _href, _pclk, _sync) { \
+	.input_seq = (_seq),                                      \
+	.vref_pol = (_vref),                                      \
+	.href_pol = (_href),                                      \
+	.clk_pol = (_pclk),                                       \
+	.sync_type = (_sync),                                     \
+}
+
+#define XF16CAM_CSI_DEFAULT \
+	XF16CAM_CSI_PROFILE(CSI_IN_SEQ_YUYV, CSI_POL_POSITIVE, \
+	                     CSI_POL_POSITIVE, CSI_POL_NEGATIVE, \
+	                     CSI_SYNC_SEPARARE)
+
+typedef struct {
 	const char *name;
 	const uint8_t *table;
 	const uint8_t *post_table;
@@ -28,7 +50,7 @@ typedef struct {
 	uint8_t bank_value;
 	uint8_t id_register;
 	uint8_t id_value;
-	uint8_t clk_pol;
+	XF16CamCsiProfile csi;
 	uint8_t power_cycle;
 	uint8_t delay_register[2];
 	uint8_t delay_value[2];
@@ -57,6 +79,7 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.input_height = 240,
 		.output_width = 320,
 		.output_height = 240,
+		.csi = XF16CAM_CSI_DEFAULT,
 	},
 	{
 		.name = "GC0308",
@@ -71,6 +94,7 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.input_height = 480,
 		.output_width = 320,
 		.output_height = 240,
+		.csi = XF16CAM_CSI_DEFAULT,
 	},
 	{
 		.name = "HI704",
@@ -79,7 +103,9 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.bank_value = 0x00,
 		.id_register = 0x04,
 		.id_value = 0x96,
-		.clk_pol = CSI_POL_POSITIVE,
+		.csi = XF16CAM_CSI_PROFILE(CSI_IN_SEQ_YUYV, CSI_POL_POSITIVE,
+		                             CSI_POL_POSITIVE, CSI_POL_POSITIVE,
+		                             CSI_SYNC_SEPARARE),
 		.table = xf16cam_hi704_table,
 		.table_size = XF16CAM_HI704_TABLE_SIZE,
 		.input_width = 640,
@@ -100,6 +126,7 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.input_height = 480,
 		.output_width = 320,
 		.output_height = 240,
+		.csi = XF16CAM_CSI_DEFAULT,
 	},
 	{
 		.name = "SP0828",
@@ -114,6 +141,7 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.input_height = 320,
 		.output_width = 240,
 		.output_height = 320,
+		.csi = XF16CAM_CSI_DEFAULT,
 	},
 };
 
@@ -122,13 +150,20 @@ static const XF16CamSensor *g_selected;
 __xip_text
 void xf16cam_sensor_prepare_capture(void)
 {
+	const uint32_t mask = CSI_INPUT_SEQ_MASK | CSI_VREF_POL_MASK |
+	                      CSI_HREF_POL_MASK | CSI_CLK_POL_MASK |
+	                      CSI_SYNC_TYPE_MASK;
 	uint32_t desired;
 
 	if (!g_selected)
 		return;
-	desired = (uint32_t)g_selected->clk_pol << CSI_CLK_POL_SHIFT;
-	if ((CSI->CSI_CFG_REG & CSI_CLK_POL_MASK) != desired)
-		HAL_MODIFY_REG(CSI->CSI_CFG_REG, CSI_CLK_POL_MASK, desired);
+	desired = ((uint32_t)g_selected->csi.input_seq << CSI_INPUT_SEQ_SHIFT) |
+	          ((uint32_t)g_selected->csi.vref_pol << CSI_VREF_POL_SHIFT) |
+	          ((uint32_t)g_selected->csi.href_pol << CSI_HREF_POL_SHIFT) |
+	          ((uint32_t)g_selected->csi.clk_pol << CSI_CLK_POL_SHIFT) |
+	          ((uint32_t)g_selected->csi.sync_type << CSI_SYNC_TYPE_SHIFT);
+	if ((CSI->CSI_CFG_REG & mask) != desired)
+		HAL_MODIFY_REG(CSI->CSI_CFG_REG, mask, desired);
 }
 
 __xip_text
@@ -342,11 +377,16 @@ int xf16cam_sensor_configure_camera(uint16_t configured_width,
 		}
 	}
 
-	/* Sensor PCLK sampling edges differ. Apply this after geometry ioctls,
-	 * which reconfigure CSI with the SDK default. */
+	/* Sensor byte order and sync signals differ. Apply this after geometry
+	 * ioctls, which reconfigure CSI with the SDK defaults. */
 	xf16cam_sensor_prepare_capture();
-	printf("xf16cam camera: %s CSI clock polarity=%u\n",
-	       g_selected->name, (unsigned int)g_selected->clk_pol);
+	printf("xf16cam camera: %s CSI seq=%u vref=%u href=%u pclk=%u sync=%u\n",
+	       g_selected->name,
+	       (unsigned int)g_selected->csi.input_seq,
+	       (unsigned int)g_selected->csi.vref_pol,
+	       (unsigned int)g_selected->csi.href_pol,
+	       (unsigned int)g_selected->csi.clk_pol,
+	       (unsigned int)g_selected->csi.sync_type);
 	return 0;
 }
 

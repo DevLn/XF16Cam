@@ -60,6 +60,9 @@ single-client RTSP stream without PSRAM or an SD card.
 - SP0828 (`0x0c`): factory FTY/X5/X6 24 MHz portrait table at 240 x 320;
   hardware validated on XF16.
 
+Each sensor has a compact CSI profile for byte order, PCLK/HREF/VREF polarity,
+and sync type, so new sensors can override these without changing the SDK.
+
 The Taixin-derived tables are deliberately limited to byte-exact sequences
 corroborated by the supplied factory-firmware research bundle. The alternative
 SP0828 tables are not included: the FTY/X5/X6 variant matches the XR872 A9
