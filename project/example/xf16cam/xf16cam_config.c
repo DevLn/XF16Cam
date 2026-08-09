@@ -11,6 +11,10 @@
 #define XF16CAM_CONFIG_MAGIC   (0x58464346UL)
 #define XF16CAM_CONFIG_SCHEMA  (1U)
 
+/* Resolution consumes the first byte reserved by schema 1. Preserve this
+ * layout so existing Wi-Fi/media settings remain checksum-compatible. */
+_Static_assert(sizeof(XF16CamConfig) == 116, "XF16Cam schema 1 layout changed");
+
 static fdcm_handle_t *g_config_store;
 static XF16CamConfig g_configs[2];
 static OS_Mutex_t g_config_lock;
@@ -39,6 +43,7 @@ static void xf16cam_config_defaults(XF16CamConfig *config)
 	config->length = sizeof(*config);
 	config->wifi_mode = XF16CAM_WIFI_AP;
 	config->media_mode = XF16CAM_MEDIA_RTSP;
+	config->resolution = XF16CAM_RESOLUTION_QVGA;
 	config->checksum = xf16cam_config_checksum(config);
 }
 
@@ -51,6 +56,7 @@ static int xf16cam_config_valid(const XF16CamConfig *config)
 	    config->wifi_mode > XF16CAM_WIFI_STA ||
 	    config->media_mode < XF16CAM_MEDIA_RTSP ||
 	    config->media_mode > XF16CAM_MEDIA_WEB ||
+	    config->resolution > XF16CAM_RESOLUTION_VGA ||
 	    config->ssid[XF16CAM_SSID_MAX_LEN] != '\0' ||
 	    config->psk[XF16CAM_PSK_MAX_LEN] != '\0') {
 		return 0;
@@ -90,10 +96,11 @@ int xf16cam_config_init(void)
 		return 0;
 	}
 
-	printf("xf16cam config: loaded schema=%u wifi=%s media=%s ssid=%s\n",
+	printf("xf16cam config: loaded schema=%u wifi=%s media=%s resolution=%s ssid=%s\n",
 	       config->schema,
 	       config->wifi_mode == XF16CAM_WIFI_STA ? "STA" : "AP",
 	       config->media_mode == XF16CAM_MEDIA_WEB ? "WEB" : "RTSP",
+	       config->resolution == XF16CAM_RESOLUTION_VGA ? "VGA" : "QVGA",
 	       config->ssid);
 	return 0;
 }
@@ -185,6 +192,27 @@ int xf16cam_config_save_media(XF16CamMediaMode mode)
 	}
 	config = *xf16cam_config_get();
 	config.media_mode = mode;
+	result = xf16cam_config_write(&config);
+	OS_MutexUnlock(&g_config_lock);
+	return result;
+}
+
+int xf16cam_config_save_resolution(XF16CamResolution resolution)
+{
+	XF16CamConfig config;
+	int result;
+
+	if (resolution != XF16CAM_RESOLUTION_QVGA &&
+	    resolution != XF16CAM_RESOLUTION_VGA)
+		return -1;
+	if (!g_config_lock_ready || OS_MutexLock(&g_config_lock, OS_WAIT_FOREVER) != OS_OK)
+		return -1;
+	if (g_update_active) {
+		OS_MutexUnlock(&g_config_lock);
+		return -1;
+	}
+	config = *xf16cam_config_get();
+	config.resolution = resolution;
 	result = xf16cam_config_write(&config);
 	OS_MutexUnlock(&g_config_lock);
 	return result;

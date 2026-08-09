@@ -14,5 +14,6 @@ const char *xf16cam_sensor_name(void);
 int xf16cam_sensor_available(void);
 uint16_t xf16cam_sensor_width(void);
 uint16_t xf16cam_sensor_height(void);
+int xf16cam_sensor_supports_vga(void);
 
 #endif

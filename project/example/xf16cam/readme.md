@@ -39,8 +39,8 @@ single-client RTSP stream without PSRAM or an SD card.
 - RTSP input is framed across fragmented/coalesced TCP reads, rejects unsupported
   transports, accepts case-insensitive RTSP header/transport tokens, and applies
   bounded connection and send waits.
-- Image: 320 x 240 for the landscape sensors, or SP0828 portrait 240 x 320;
-  JPEG quality 60
+- Image: 320 x 240 by default, with persistent native 640 x 480 selection for
+  VGA-capable landscape sensors; SP0828 remains portrait 240 x 320. JPEG quality 60.
 - Sensor probing and driver dispatch use a small descriptor registry and one
   register-table backend; adding a compatible sensor does not require changes
   to the shared camera core.
@@ -51,14 +51,15 @@ single-client RTSP stream without PSRAM or an SD card.
 ## Camera sensors
 
 - GC0328 (`0x9d`): factory QVGA table, hardware validated on XF16.
-- GC0308 (`0x9b`): compacted XR872 SDK VGA table, hardware half-scaled to QVGA;
-  compiled but awaiting matching-sensor validation.
+- GC0308 (`0x9b`): compacted XR872 SDK VGA table, QVGA by default with selectable
+  native VGA; compiled but awaiting matching-sensor validation.
 - GC0312 (ID `0xb3:0x10`): exact XF16 factory 24 MHz VGA table, hardware
-  validated on XF16 and half-scaled to QVGA.
-- HI704 (`0x96`): factory FTY/X5/X6 VGA table, hardware validated on XF16 and
-  half-scaled to QVGA; its profile selects the sensor's required rising PCLK edge.
-- SP0A20 (`0x2b`): factory HQT6 VGA table, hardware half-scaled to QVGA;
-  compiled but awaiting matching-sensor validation.
+  validated on XF16; QVGA is the default and native VGA is selectable.
+- HI704 (`0x96`): factory FTY/X5/X6 VGA table, hardware validated on XF16;
+  QVGA is the default, native VGA is selectable, and its profile selects the
+  sensor's required rising PCLK edge.
+- SP0A20 (`0x2b`): factory HQT6 VGA table, QVGA by default with selectable
+  native VGA; compiled but awaiting matching-sensor validation.
 - SP0828 (`0x0c`): factory FTY/X5/X6 24 MHz portrait table at 240 x 320;
   hardware validated on XF16.
 
@@ -81,8 +82,10 @@ FFmpeg/ffplay use `-rtsp_transport tcp`.
 
 All sensors, including GC0328, use the same probe and retrying table loader;
 GC0328 retains its validated power-cycle, register-delay, and settle timings.
-The 105,692-byte capture arena is the checked worst-case bound for two aligned
-50 KiB JPEG buffers and contains no YUV framebuffer.
+The 104,046-byte capture arena is the checked worst-case bound for one aligned
+100 KiB JPEG buffer and contains no YUV framebuffer. Still capture keeps that
+buffer immutable while a frame is transmitted, so the larger per-frame ceiling
+costs slightly less SRAM than the former pair of 50 KiB buffers.
 Frames are acquired one at a time so a slow network client cannot race the
 hardware encoder and observe a buffer while it is being overwritten.
 The shared PA23 camera/SD rail, capture arena, and AMIC are demand-driven: boot

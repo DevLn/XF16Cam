@@ -35,9 +35,9 @@
 #include "xf16cam_version.h"
 
 #define JPEG_ONLINE_EN           (1)
-#define JPEG_BUFFER_COUNT        (2)
+#define JPEG_BUFFER_COUNT        (1)
 #define JPEG_MPART_EN            (0)
-#define JPEG_BUFF_SIZE           (50 * 1024)
+#define JPEG_BUFF_SIZE           (100 * 1024)
 #define JPEG_SRAM_SIZE           \
 	(JPEG_BUFFER_COUNT * (JPEG_BUFF_SIZE + CAMERA_JPEG_HEADER_LEN + 1023U))
 #define JPEG_IMAGE_WIDTH         (320)
@@ -78,6 +78,9 @@ static uint32_t g_camera_users;
 static OS_Thread_t g_mjpeg_thread;
 static volatile int g_mjpeg_active;
 static volatile int g_rtsp_active;
+static XF16CamMediaInfo g_media_info = {
+	.jpeg_capacity = JPEG_BUFF_SIZE,
+};
 
 static CAMERA_Cfg camera_cfg = {
 	.jpeg_cfg.jpeg_en = 1,
@@ -159,9 +162,9 @@ static int camera_mem_create(CAMERA_JpegCfg *jpeg_cfg, CAMERA_Mgmt *mgmt)
 	end_addr = addr + JPEG_SRAM_SIZE;
 	printf("malloc addr: %p -> %p\n", addr, end_addr);
 
-	/* Online JPEG mode does not consume a YUV framebuffer. The SDK encoder is
-	 * configured with two aligned output buffers; still capture owns each
-	 * returned frame until the next capture call. */
+	/* Online JPEG mode does not consume a YUV framebuffer. Still capture keeps
+	 * this single buffer immutable until the next capture call; both transports
+	 * finish sending the current frame before requesting another. */
 	mgmt->yuv_buf.addr = NULL;
 	mgmt->yuv_buf.size = 0;
 	cursor = addr;
@@ -203,6 +206,10 @@ static void camera_deinit(void)
 __xip_text
 static int camera_init(void)
 {
+	const XF16CamConfig *config = xf16cam_config_get();
+
+	camera_cfg.jpeg_cfg.width = config->resolution == XF16CAM_RESOLUTION_VGA ? 640 : 320;
+	camera_cfg.jpeg_cfg.height = config->resolution == XF16CAM_RESOLUTION_VGA ? 480 : 240;
 	memset(&mem_mgmt, 0, sizeof(mem_mgmt));
 	if (camera_mem_create(&camera_cfg.jpeg_cfg, &mem_mgmt) != 0)
 		return -1;
@@ -215,7 +222,9 @@ static int camera_init(void)
 	if (xf16cam_sensor_configure_camera(camera_cfg.jpeg_cfg.width,
 	                                  camera_cfg.jpeg_cfg.height) != 0) {
 		printf("xf16cam camera: geometry configuration failed\n");
-		camera_deinit();
+		/* The caller owns the capture arena and shared rail on every init
+		 * failure; only unwind the successfully created camera instance here. */
+		HAL_CAMERA_DeInit();
 		return -1;
 	}
 	return 0;
@@ -413,17 +422,29 @@ static int xf16cam_capture_jpeg(CAMERA_JpegBuffInfo *info, uint8_t **jpeg,
 				uint32_t *jpeg_len)
 {
 	xf16cam_sensor_prepare_capture();
-	if (HAL_CAMERA_CaptureImage(CAMERA_OUT_JPEG, info, 1) != 0)
+	if (HAL_CAMERA_CaptureImage(CAMERA_OUT_JPEG, info, 1) != 0) {
+		++g_media_info.capture_errors;
 		return -1;
+	}
 	if (info->buff_index >= JPEG_BUFFER_COUNT || info->size == 0 ||
 	    info->size > mem_mgmt.jpeg_buf[info->buff_index].size) {
+		++g_media_info.capture_errors;
 		printf("xf16cam invalid capture metadata: index=%u len=%lu\n",
 		       info->buff_index, (unsigned long)info->size);
 		return 1;
 	}
 	*jpeg = mem_mgmt.jpeg_buf[info->buff_index].addr - CAMERA_JPEG_HEADER_LEN;
 	*jpeg_len = info->size + CAMERA_JPEG_HEADER_LEN;
+	++g_media_info.frames;
+	if (info->size > g_media_info.largest_jpeg)
+		g_media_info.largest_jpeg = info->size;
 	return 0;
+}
+
+__xip_text
+const XF16CamMediaInfo *xf16cam_media_info(void)
+{
+	return &g_media_info;
 }
 
 static int xf16cam_mjpeg_stream(int fd)
@@ -996,6 +1017,8 @@ int main(void)
 	printf("xf16cam version %s\n", XF16CAM_VERSION);
 	if (xf16cam_rail_init() != 0)
 		printf("xf16cam media rail: initialization failed\n");
+	if (xf16cam_config_init() != 0)
+		printf("xf16cam config: persistence unavailable\n");
 
 	/* Probe once so management can report the sensor, then release the rail and
 	 * capture arena after services start. Stream clients reacquire both. */
@@ -1005,8 +1028,6 @@ int main(void)
 	}
 	if (xf16cam_audio_start() != 0)
 		printf("xf16cam audio: task start failed\n");
-	if (xf16cam_config_init() != 0)
-		printf("xf16cam config: persistence unavailable\n");
 	board_ready = xf16cam_board_init() == 0;
 	xf16cam_storage_init();
 	if (xf16cam_net_start(xf16cam_config_get()) != 0) {

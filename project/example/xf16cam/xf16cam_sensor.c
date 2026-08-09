@@ -57,6 +57,7 @@ typedef struct {
 	XF16CamSensorId id[XF16CAM_SENSOR_ID_COUNT];
 	uint8_t id_count;
 	XF16CamCsiProfile csi;
+	uint8_t vga_selectable;
 	uint8_t power_cycle;
 	uint8_t delay_register[2];
 	uint8_t delay_value[2];
@@ -100,6 +101,7 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.input_height = 480,
 		.output_width = 320,
 		.output_height = 240,
+		.vga_selectable = 1,
 		.csi = XF16CAM_CSI_DEFAULT,
 	},
 	{
@@ -118,6 +120,7 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.input_height = 480,
 		.output_width = 320,
 		.output_height = 240,
+		.vga_selectable = 1,
 	},
 	{
 		.name = "GC0312",
@@ -132,6 +135,7 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.input_height = 480,
 		.output_width = 320,
 		.output_height = 240,
+		.vga_selectable = 1,
 		.csi = XF16CAM_CSI_DEFAULT,
 	},
 	{
@@ -147,6 +151,7 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.input_height = 480,
 		.output_width = 320,
 		.output_height = 240,
+		.vga_selectable = 1,
 		.csi = XF16CAM_CSI_DEFAULT,
 	},
 	{
@@ -167,6 +172,8 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 };
 
 static const XF16CamSensor *g_selected;
+static uint16_t g_output_width;
+static uint16_t g_output_height;
 
 __xip_text
 void xf16cam_sensor_prepare_capture(void)
@@ -339,6 +346,8 @@ HAL_Status xf16cam_sensor_init(SENSOR_ConfigParam *cfg)
 		return HAL_ERROR;
 	bus = (I2C_ID)cfg->i2c_id;
 	g_selected = NULL;
+	g_output_width = 0;
+	g_output_height = 0;
 
 	for (phase = 0; phase < sizeof(control_states) / sizeof(control_states[0]); ++phase) {
 		xf16cam_sensor_control(cfg, control_states[phase]);
@@ -349,6 +358,8 @@ HAL_Status xf16cam_sensor_init(SENSOR_ConfigParam *cfg)
 				HAL_Status status;
 
 				g_selected = &g_sensors[index];
+				g_output_width = g_selected->output_width;
+				g_output_height = g_selected->output_height;
 				HAL_I2C_DeInit(bus);
 				printf("xf16cam camera: %s detected (id=0x%02x)\n",
 				       g_selected->name, chip_id);
@@ -388,21 +399,28 @@ int xf16cam_sensor_configure_camera(uint16_t configured_width,
 
 	if (!g_selected)
 		return -1;
+	g_output_width = g_selected->output_width;
+	g_output_height = g_selected->output_height;
+	if (g_selected->vga_selectable && configured_width == 640 &&
+	    configured_height == 480) {
+		g_output_width = g_selected->input_width;
+		g_output_height = g_selected->input_height;
+	}
 	if (g_selected->input_width != configured_width ||
 	    g_selected->input_height != configured_height ||
-	    g_selected->output_width != configured_width ||
-	    g_selected->output_height != configured_height) {
+	    g_output_width != configured_width ||
+	    g_output_height != configured_height) {
 		input.width = g_selected->input_width;
 		input.height = g_selected->input_height;
 		if (HAL_CAMERA_IoCtl(CAMERA_SET_PIXEL_SIZE, (uint32_t)&input) != 0 ||
 		    HAL_CAMERA_IoCtl(CAMERA_SET_JPEG_MODE, JPEG_MOD_ONLINE) != 0)
 			return -1;
 
-		scale = g_selected->input_width != g_selected->output_width ||
-		        g_selected->input_height != g_selected->output_height;
+		scale = g_selected->input_width != g_output_width ||
+		        g_selected->input_height != g_output_height;
 		if (scale) {
-			if (g_selected->input_width != g_selected->output_width * 2 ||
-			    g_selected->input_height != g_selected->output_height * 2 ||
+			if (g_selected->input_width != g_output_width * 2 ||
+			    g_selected->input_height != g_output_height * 2 ||
 			    HAL_CAMERA_IoCtl(CAMERA_SET_JPEG_SCALE, 1) != 0)
 				return -1;
 		}
@@ -411,8 +429,9 @@ int xf16cam_sensor_configure_camera(uint16_t configured_width,
 	/* Sensor byte order and sync signals differ. Apply this after geometry
 	 * ioctls, which reconfigure CSI with the SDK defaults. */
 	xf16cam_sensor_prepare_capture();
-	printf("xf16cam camera: %s CSI seq=%u vref=%u href=%u pclk=%u sync=%u\n",
+	printf("xf16cam camera: %s output=%ux%u CSI seq=%u vref=%u href=%u pclk=%u sync=%u\n",
 	       g_selected->name,
+	       (unsigned int)g_output_width, (unsigned int)g_output_height,
 	       (unsigned int)g_selected->csi.input_seq,
 	       (unsigned int)g_selected->csi.vref_pol,
 	       (unsigned int)g_selected->csi.href_pol,
@@ -433,10 +452,15 @@ int xf16cam_sensor_available(void)
 
 uint16_t xf16cam_sensor_width(void)
 {
-	return g_selected ? g_selected->output_width : 0;
+	return g_selected ? g_output_width : 0;
 }
 
 uint16_t xf16cam_sensor_height(void)
 {
-	return g_selected ? g_selected->output_height : 0;
+	return g_selected ? g_output_height : 0;
+}
+
+int xf16cam_sensor_supports_vga(void)
+{
+	return g_selected && g_selected->vga_selectable;
 }

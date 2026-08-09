@@ -273,6 +273,7 @@ static void xf16cam_http_page(int fd)
 {
 	const XF16CamConfig *config = xf16cam_config_get();
 	const XF16CamAudioInfo *audio = xf16cam_audio_info();
+	const XF16CamMediaInfo *media = xf16cam_media_info();
 	const XF16CamStorageInfo *storage = xf16cam_storage_info();
 	const XF16CamPowerInfo *power = xf16cam_power_info();
 	const struct sysinfo *sysinfo = sysinfo_get();
@@ -356,11 +357,33 @@ static void xf16cam_http_page(int fd)
 	                  "<b>Sensor</b><span>");
 	xf16cam_http_send_text(fd, xf16cam_sensor_name());
 	length = snprintf(dynamic, sizeof(dynamic),
-	                  "</span><b>JPEG output</b><span>%s</span><b>Stream mode</b><span>%s</span></div></section>"
-	                  "<section class=card><h2>Audio</h2><div class=grid><b>Microphone</b><span>%s</span>"
-	                  "<b>Peak level</b><span><span id=mic>%u</span>/32768</span></div></section></div>",
+	                  "</span><b>JPEG output</b><span>%s</span><b>Stream mode</b><span>%s</span>"
+	                  "<b>JPEG body buffer</b><span>%lu bytes</span><b>Frames captured</b><span>%lu</span>"
+	                  "<b>Largest JPEG body</b><span>%lu bytes</span><b>Capture errors</b><span>%lu</span></div>",
 	                  camera_output, !camera_available ? "Disabled (no sensor)" :
 	                  config->media_mode == XF16CAM_MEDIA_WEB ? "Browser MJPEG" : "RTSP",
+	                  (unsigned long)media->jpeg_capacity, (unsigned long)media->frames,
+	                  (unsigned long)media->largest_jpeg,
+	                  (unsigned long)media->capture_errors);
+	xf16cam_http_send_all(fd, dynamic, length);
+	if (xf16cam_sensor_supports_vga()) {
+		if (xf16cam_sensor_width() == 640)
+			XF16CAM_HTTP_SEND_LITERAL(fd,
+			                  "<form method=post action=/api/resolution>"
+			                  "<button name=resolution value=qvga>320x240</button> "
+			                  "<button disabled>640x480 (active)</button></form>");
+		else
+			XF16CAM_HTTP_SEND_LITERAL(fd,
+			                  "<form method=post action=/api/resolution>"
+			                  "<button disabled>320x240 (active)</button> "
+			                  "<button name=resolution value=vga>640x480</button></form>");
+		XF16CAM_HTTP_SEND_LITERAL(fd,
+		                  "<small>Changing resolution reboots. VGA uses more bandwidth and may reduce frame rate.</small>");
+	}
+	XF16CAM_HTTP_SEND_LITERAL(fd,
+	                  "</section><section class=card><h2>Audio</h2><div class=grid><b>Microphone</b><span>");
+	length = snprintf(dynamic, sizeof(dynamic),
+	                  "%s</span><b>Peak level</b><span><span id=mic>%u</span>/32768</span></div></section></div>",
 	                  !audio->available ? "AMIC unavailable" :
 	                  audio->active ? "AMIC active, PCMU/8000" : "AMIC ready (on demand)", audio->peak);
 	xf16cam_http_send_all(fd, dynamic, length);
@@ -887,6 +910,31 @@ static int xf16cam_http_handle(int fd)
 			return XF16CAM_HTTP_KEEP_RUNNING;
 		}
 		xf16cam_http_message(fd, "200 OK", "Camera mode saved. Rebooting...");
+		return XF16CAM_HTTP_COLD_REBOOT;
+	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/resolution") == 0) {
+		XF16CamResolution resolution;
+
+		if (xf16cam_form_value(body, "resolution", mode, sizeof(mode)) != 0 ||
+		    (strcmp(mode, "qvga") != 0 && strcmp(mode, "vga") != 0)) {
+			xf16cam_http_message(fd, "400 Bad Request", "Invalid camera resolution.");
+			return XF16CAM_HTTP_KEEP_RUNNING;
+		}
+		resolution = strcmp(mode, "vga") == 0 ? XF16CAM_RESOLUTION_VGA :
+		                                              XF16CAM_RESOLUTION_QVGA;
+		if (resolution == XF16CAM_RESOLUTION_VGA && !xf16cam_sensor_supports_vga()) {
+			xf16cam_http_message(fd, "409 Conflict", "The detected sensor does not support VGA output.");
+			return XF16CAM_HTTP_KEEP_RUNNING;
+		}
+		if (xf16cam_config_save_resolution(resolution) != 0) {
+			xf16cam_http_message(fd, "500 Internal Server Error", "Could not save camera resolution.");
+			return XF16CAM_HTTP_KEEP_RUNNING;
+		}
+		if (xf16cam_update_begin() != 0) {
+			xf16cam_http_message(fd, "409 Conflict",
+			                     "Camera resolution was saved, but reboot was deferred by another update.");
+			return XF16CAM_HTTP_KEEP_RUNNING;
+		}
+		xf16cam_http_message(fd, "200 OK", "Camera resolution saved. Rebooting...");
 		return XF16CAM_HTTP_COLD_REBOOT;
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/sd/refresh") == 0) {
 		if (xf16cam_storage_refresh() != 0)
