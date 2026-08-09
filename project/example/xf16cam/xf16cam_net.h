@@ -4,7 +4,6 @@
 #include "xf16cam_config.h"
 
 #define XF16CAM_AP_SSID  "XF16CAM"
-#define XF16CAM_AP_PSK   "xf16camera"
 #define XF16CAM_AP_IP    "192.168.4.1"
 #define XF16CAM_DHCP_IP  "192.168.4.100"
 

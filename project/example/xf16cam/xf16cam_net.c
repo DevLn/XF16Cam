@@ -37,7 +37,7 @@ static int xf16cam_net_start_ap(void)
 	ip_addr_t gateway;
 	struct dhcp_server_info dhcp = { 0 };
 
-	printf("xf16cam Wi-Fi: starting AP ssid=%s ip=%s\n",
+	printf("xf16cam Wi-Fi: starting open AP ssid=%s ip=%s\n",
 	       XF16CAM_AP_SSID, XF16CAM_AP_IP);
 	if (net_switch_mode(WLAN_MODE_HOSTAP) != 0) {
 		printf("xf16cam Wi-Fi: AP mode switch failed\n");
@@ -47,7 +47,7 @@ static int xf16cam_net_start_ap(void)
 	 * enable failures are authoritative; disable is intentionally best-effort. */
 	(void)wlan_ap_disable();
 	if (wlan_ap_set((uint8_t *)XF16CAM_AP_SSID, strlen(XF16CAM_AP_SSID),
-	                (uint8_t *)XF16CAM_AP_PSK) != 0 ||
+	                NULL) != 0 ||
 	    wlan_ap_enable() != 0) {
 		printf("xf16cam Wi-Fi: AP configuration failed\n");
 		return -1;

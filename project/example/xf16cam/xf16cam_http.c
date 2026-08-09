@@ -86,7 +86,7 @@ static const char *xf16cam_http_boot_reason(void)
 
 __xip_text
 __attribute__((noinline))
-static int xf16cam_http_temperature(void)
+static int xf16cam_http_chip_temperature(void)
 {
 	wlan_ext_temp_volt_get_t temperature;
 	int32_t value;
@@ -183,7 +183,7 @@ __xip_text
 static void xf16cam_http_runtime(int fd, char *dynamic, size_t size)
 {
 	uint32_t uptime = OS_TicksToMSecs(OS_GetTicks()) / 1000U;
-	int temperature = xf16cam_http_temperature();
+	int temperature = xf16cam_http_chip_temperature();
 	char temperature_text[20];
 	int length;
 
@@ -197,7 +197,7 @@ static void xf16cam_http_runtime(int fd, char *dynamic, size_t size)
 	                  "<section class=card><h2>Runtime</h2><div class=grid>"
 	                  "<b>Uptime</b><span>%lu days %02lu:%02lu:%02lu</span>"
 	                  "<b>Boot reason</b><span>%s</span>"
-	                  "<b>XR872 temperature</b><span>%s</span>"
+	                  "<b>XF16 chip temperature</b><span>%s</span>"
 	                  "</div></section>",
 	                  (unsigned long)(uptime / 86400U),
 	                  (unsigned long)((uptime / 3600U) % 24U),
@@ -304,7 +304,7 @@ static void xf16cam_http_page(int fd)
 	                  "<div class=meta>%s</div></div><span class=pill>%s</span></div>"
 	                  "<div class=screen>",
 	                  XF16CAM_VERSION,
-	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Setup AP",
+	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Open AP",
 	                  xf16cam_net_ip(), camera_detail,
 	                  !camera_available ? "Offline" :
 	                  config->media_mode == XF16CAM_MEDIA_WEB ? "Browser MJPEG" : "RTSP");
@@ -401,7 +401,7 @@ static void xf16cam_http_page(int fd)
 	                  "<label>Password<input type=password name=password maxlength=63 autocomplete=new-password>"
 	                  "<small>Blank keeps the saved password for the current SSID, or joins a new open network.</small></label>"
 	                  "<button class=primary type=submit>Save and reboot</button></form>"
-	                  "<form method=post action=/api/ap><button type=submit>Return to setup AP</button></form></section></div>"
+	                  "<form method=post action=/api/ap><button type=submit>Return to open AP</button></form></section></div>"
 	                  "<div id=storage class=panel><section class='card wide'><h2>SD card</h2><div class=grid>"
 	                  "<b>Status</b><span>");
 	if (storage->mounted) {
@@ -427,7 +427,7 @@ static void xf16cam_http_page(int fd)
 	                  "<b>Heap top reserve</b><span>%lu bytes</span><b>Flash JEDEC ID</b><span>%02lX %02lX %02lX</span>"
 	                  "<b>Flash capacity</b><span>%lu KiB</span><b>Mode button</b><span>PA15 (%s)</span>"
 	                  "<b>Setup button</b><span>PA20 (%s)</span>",
-	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Setup AP", xf16cam_net_ip(),
+	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Open AP", xf16cam_net_ip(),
 	                  sysinfo->mac_addr[0], sysinfo->mac_addr[1], sysinfo->mac_addr[2],
 	                  sysinfo->mac_addr[3], sysinfo->mac_addr[4], sysinfo->mac_addr[5],
 	                  (unsigned long)xf16cam_http_heap_headroom(),
@@ -887,15 +887,15 @@ static int xf16cam_http_handle(int fd)
 		return XF16CAM_HTTP_COLD_REBOOT;
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/ap") == 0) {
 		if (xf16cam_config_save_ap() != 0) {
-			xf16cam_http_message(fd, "500 Internal Server Error", "Could not save setup AP mode.");
+			xf16cam_http_message(fd, "500 Internal Server Error", "Could not save open AP mode.");
 			return 0;
 		}
 		if (xf16cam_update_begin() != 0) {
 			xf16cam_http_message(fd, "409 Conflict",
-			                     "Setup AP was saved, but reboot was deferred by another update.");
+			                     "Open AP was saved, but reboot was deferred by another update.");
 			return XF16CAM_HTTP_KEEP_RUNNING;
 		}
-		xf16cam_http_message(fd, "200 OK", "Setup AP restored. Rebooting...");
+		xf16cam_http_message(fd, "200 OK", "Open AP restored. Rebooting...");
 		return XF16CAM_HTTP_COLD_REBOOT;
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/media") == 0) {
 		if (xf16cam_form_value(body, "mode", mode, sizeof(mode)) != 0 ||

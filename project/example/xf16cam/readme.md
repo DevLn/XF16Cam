@@ -3,7 +3,9 @@
 This isolated example turns the XF16/XR872ET camera JPEG path into a
 single-client RTSP stream without PSRAM or an SD card.
 
-- First boot starts setup AP `XF16CAM` / `xf16camera` at `192.168.4.1`.
+- First boot starts the open setup AP `XF16CAM` at `192.168.4.1`.
+- The setup AP is intentionally unauthenticated; anyone in radio range can
+  access its web and media services while AP mode is active.
 - Its DHCP server leases `192.168.4.100` to the setup client.
 - Open `http://192.168.4.1/` to scan for Wi-Fi and save STA credentials.
 - The same page accepts a streamed, verified OTA image and then reboots.
@@ -14,7 +16,7 @@ single-client RTSP stream without PSRAM or an SD card.
   resolution starts conservatively at QVGA because its old reserved byte was undefined.
 - Leaving the password blank for the currently saved secured SSID preserves
   that credential; a blank password for a different SSID selects an open network.
-- A failed STA connection falls back to the setup AP.
+- A failed STA connection falls back to the open setup AP.
 - Serial recovery: `wifi ap` or `wifi sta <ssid> <password>` saves the same
   configuration as the web page and reboots without exposing the password.
 - The serial `upgrade` command is an unconditional last-resort BootROM handoff;
@@ -25,7 +27,7 @@ single-client RTSP stream without PSRAM or an SD card.
 - Browser MJPEG frames are terminated as standalone, immutable JPEG images;
   both web and RTSP clients finish sending one frame before the next capture.
 - Device information reports flash identity, the known XF16 pin map, uptime,
-  SDK-cached boot cause, and XR872 die temperature.
+  SDK-cached boot cause, and XF16 chip temperature.
 - Runtime diagnostics retain the minimum spare stack values for the HTTP,
   audio, and board workers.
 - Demand-started AMIC capture publishes PCMU silence during its 2.1-second
@@ -33,7 +35,7 @@ single-client RTSP stream without PSRAM or an SD card.
 - Browser MJPEG reconnects after a transient failure, and transmit-only MJPEG
   and PCMU workers detect a closed browser without waiting for TCP retries.
 - PA15 short-press switches Web/RTSP mode; PA20 held for three seconds restores
-  the setup AP. PA21 blinks during startup and stays on when services are ready.
+  the open setup AP. PA21 blinks during startup and stays on when services are ready.
 - An optional one-bit SD card can be mounted, inspected, and safely ejected from
   the web page. Camera and storage share the PA23 rail through reference-counted
   ownership; the page reports total/free space and can explicitly format FAT32.
