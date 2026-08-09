@@ -11,6 +11,12 @@
 
 #define XF16CAM_SENSOR_SETTLE_MS (100)
 #define XF16CAM_SENSOR_WRITE_ATTEMPTS (4)
+#define XF16CAM_SENSOR_ID_COUNT (2)
+
+typedef struct {
+	uint8_t reg;
+	uint8_t value;
+} XF16CamSensorId;
 
 typedef struct {
 	uint8_t input_seq;
@@ -48,8 +54,8 @@ typedef struct {
 	uint8_t address;
 	uint8_t bank_register;
 	uint8_t bank_value;
-	uint8_t id_register;
-	uint8_t id_value;
+	XF16CamSensorId id[XF16CAM_SENSOR_ID_COUNT];
+	uint8_t id_count;
 	XF16CamCsiProfile csi;
 	uint8_t power_cycle;
 	uint8_t delay_register[2];
@@ -69,8 +75,8 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.address = 0x21,
 		.bank_register = 0xfe,
 		.bank_value = 0x00,
-		.id_register = 0xf0,
-		.id_value = 0x9d,
+		.id = { { 0xf0, 0x9d } },
+		.id_count = 1,
 		.power_cycle = 1,
 		.delay_register = { 0xfe, 0xfc },
 		.delay_value = { 0x80, 0x16 },
@@ -86,8 +92,8 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.address = 0x21,
 		.bank_register = 0xfe,
 		.bank_value = 0x00,
-		.id_register = 0x00,
-		.id_value = 0x9b,
+		.id = { { 0x00, 0x9b } },
+		.id_count = 1,
 		.table = xf16cam_gc0308_table,
 		.table_size = XF16CAM_GC0308_TABLE_SIZE,
 		.input_width = 640,
@@ -101,8 +107,8 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.address = 0x30,
 		.bank_register = 0x03,
 		.bank_value = 0x00,
-		.id_register = 0x04,
-		.id_value = 0x96,
+		.id = { { 0x04, 0x96 } },
+		.id_count = 1,
 		.csi = XF16CAM_CSI_PROFILE(CSI_IN_SEQ_YUYV, CSI_POL_POSITIVE,
 		                             CSI_POL_POSITIVE, CSI_POL_POSITIVE,
 		                             CSI_SYNC_SEPARARE),
@@ -114,12 +120,27 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.output_height = 240,
 	},
 	{
+		.name = "GC0312",
+		.address = 0x21,
+		.bank_register = 0xfe,
+		.bank_value = 0x00,
+		.id = { { 0xf0, 0xb3 }, { 0xf1, 0x10 } },
+		.id_count = 2,
+		.table = xf16cam_gc0312_table,
+		.table_size = XF16CAM_GC0312_TABLE_SIZE,
+		.input_width = 640,
+		.input_height = 480,
+		.output_width = 320,
+		.output_height = 240,
+		.csi = XF16CAM_CSI_DEFAULT,
+	},
+	{
 		.name = "SP0A20",
 		.address = 0x21,
 		.bank_register = 0xfd,
 		.bank_value = 0x00,
-		.id_register = 0x02,
-		.id_value = 0x2b,
+		.id = { { 0x02, 0x2b } },
+		.id_count = 1,
 		.table = xf16cam_sp0a20_table,
 		.table_size = XF16CAM_SP0A20_TABLE_SIZE,
 		.input_width = 640,
@@ -133,8 +154,8 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.address = 0x18,
 		.bank_register = 0xfd,
 		.bank_value = 0x00,
-		.id_register = 0x02,
-		.id_value = 0x0c,
+		.id = { { 0x02, 0x0c } },
+		.id_count = 1,
 		.table = xf16cam_sp0828_table,
 		.table_size = XF16CAM_SP0828_TABLE_SIZE,
 		.input_width = 240,
@@ -207,16 +228,26 @@ static int xf16cam_sensor_probe(I2C_ID bus, const XF16CamSensor *sensor,
 				uint8_t *chip_id)
 {
 	uint8_t value = sensor->bank_value;
+	unsigned int index;
 
 	if (HAL_I2C_SCCB_Master_Transmit_IT(bus, sensor->address,
 	                                  sensor->bank_register, &value) != 1)
 		return 0;
-	value = 0;
-	if (HAL_I2C_SCCB_Master_Receive_IT(bus, sensor->address,
-	                                 sensor->id_register, &value) != 1)
+	if (sensor->id_count == 0 || sensor->id_count > XF16CAM_SENSOR_ID_COUNT)
 		return 0;
-	*chip_id = value;
-	return value == sensor->id_value;
+	for (index = 0; index < sensor->id_count; ++index) {
+		const XF16CamSensorId *id = &sensor->id[index];
+
+		value = 0;
+		if (HAL_I2C_SCCB_Master_Receive_IT(bus, sensor->address,
+		                                 id->reg, &value) != 1)
+			return 0;
+		if (index == 0)
+			*chip_id = value;
+		if (value != id->value)
+			return 0;
+	}
+	return 1;
 }
 
 __xip_text

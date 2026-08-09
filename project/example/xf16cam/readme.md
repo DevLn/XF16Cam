@@ -53,6 +53,8 @@ single-client RTSP stream without PSRAM or an SD card.
 - GC0328 (`0x9d`): factory QVGA table, hardware validated on XF16.
 - GC0308 (`0x9b`): compacted XR872 SDK VGA table, hardware half-scaled to QVGA;
   compiled but awaiting matching-sensor validation.
+- GC0312 (ID `0xb3:0x10`): exact XF16 factory 24 MHz VGA table, hardware
+  validated on XF16 and half-scaled to QVGA.
 - HI704 (`0x96`): factory FTY/X5/X6 VGA table, hardware validated on XF16 and
   half-scaled to QVGA; its profile selects the sensor's required rising PCLK edge.
 - SP0A20 (`0x2b`): factory HQT6 VGA table, hardware half-scaled to QVGA;
@@ -63,15 +65,16 @@ single-client RTSP stream without PSRAM or an SD card.
 Each sensor has a compact CSI profile for byte order, PCLK/HREF/VREF polarity,
 and sync type, so new sensors can override these without changing the SDK.
 
-The Taixin-derived tables are deliberately limited to byte-exact sequences
-corroborated by the supplied factory-firmware research bundle. The alternative
-SP0828 tables are not included: the FTY/X5/X6 variant matches the XR872 A9
-family and the fixed 24 MHz sensor clock. Register tables live in XIP flash and
-share one retrying SCCB writer, avoiding per-sensor code and runtime state.
-They were adapted from the camera-driver evidence associated with
-`NonPIayerCharacter/OpenTXW81X`; its repository currently has no visible
-top-level licence, so provenance should be resolved before redistributing those
-three tables beyond this research firmware.
+The GC0312 sequence is byte-exact from XF16 factory firmware. The Taixin-derived
+HI704, SP0A20, and SP0828 tables are deliberately limited to byte-exact
+sequences corroborated by the supplied factory-firmware research bundle. The
+alternative SP0828 tables are not included: the FTY/X5/X6 variant matches the
+XR872 A9 family and the fixed 24 MHz sensor clock. Register tables live in XIP
+flash and share one retrying SCCB writer, avoiding per-sensor code and runtime
+state. Those three tables were adapted from the camera-driver evidence
+associated with `NonPIayerCharacter/OpenTXW81X`; its repository currently has
+no visible top-level licence, so provenance should be resolved before
+redistributing them beyond this research firmware.
 
 For VLC, force RTSP-over-TCP if it does not select it automatically. For
 FFmpeg/ffplay use `-rtsp_transport tcp`.
@@ -91,7 +94,7 @@ for serial recovery and reflashing.
 
 ## Confirmed XF16 hardware
 
-- GC0328 CSI: PA0-PA11; camera control: PA14; camera power rail: PA23
+- Camera CSI: PA0-PA11; camera control: PA14; camera power rail: PA23
 - Factory status LED: PA21; mode button: PA15; setup/reset button: PA20
 - Microphone: XR872 internal codec analog microphone (AMIC) input, not a GPIO
 - SD card: PB16 CMD, PB17 D0, PB18 CLK
