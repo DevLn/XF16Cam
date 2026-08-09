@@ -42,8 +42,10 @@ typedef struct {
 
 typedef struct {
 	const char *name;
+	const uint8_t *probe_table;
 	const uint8_t *table;
 	const uint8_t *post_table;
+	uint16_t probe_table_size;
 	uint16_t table_size;
 	uint16_t post_table_size;
 	uint16_t init_settle_ms;
@@ -97,6 +99,27 @@ __xip_rodata static const XF16CamSensor g_sensors[] = {
 		.id_count = 1,
 		.table = xf16cam_gc0308_table,
 		.table_size = XF16CAM_GC0308_TABLE_SIZE,
+		.input_width = 640,
+		.input_height = 480,
+		.output_width = 320,
+		.output_height = 240,
+		.vga_selectable = 1,
+		.csi = XF16CAM_CSI_DEFAULT,
+	},
+	{
+		.name = "GC0329",
+		.address = 0x31,
+		.probe_table = xf16cam_gc0329_table,
+		.probe_table_size = XF16CAM_GC0329_PROBE_TABLE_SIZE,
+		.bank_register = 0xfe,
+		.bank_value = 0x00,
+		.id = { { 0x00, 0xc0 } },
+		.id_count = 1,
+		.table = xf16cam_gc0329_table,
+		.table_size = XF16CAM_GC0329_TABLE_SIZE,
+		.post_table = xf16cam_gc0329_vga_table,
+		.post_table_size = XF16CAM_GC0329_VGA_TABLE_SIZE,
+		.init_settle_ms = 500,
 		.input_width = 640,
 		.input_height = 480,
 		.output_width = 320,
@@ -230,6 +253,12 @@ static void xf16cam_sensor_power_cycle(const SENSOR_ConfigParam *cfg)
 	OS_MSleep(10);
 }
 
+static HAL_Status xf16cam_sensor_write_table(I2C_ID bus,
+					     const XF16CamSensor *sensor,
+					     const uint8_t *table,
+					     uint16_t size,
+					     int report_error);
+
 __xip_text
 static int xf16cam_sensor_probe(I2C_ID bus, const XF16CamSensor *sensor,
 				uint8_t *chip_id)
@@ -237,6 +266,10 @@ static int xf16cam_sensor_probe(I2C_ID bus, const XF16CamSensor *sensor,
 	uint8_t value = sensor->bank_value;
 	unsigned int index;
 
+	if (sensor->probe_table && sensor->probe_table_size &&
+	    xf16cam_sensor_write_table(bus, sensor, sensor->probe_table,
+	                               sensor->probe_table_size, 0) != HAL_OK)
+		return 0;
 	if (HAL_I2C_SCCB_Master_Transmit_IT(bus, sensor->address,
 	                                  sensor->bank_register, &value) != 1)
 		return 0;
@@ -258,8 +291,11 @@ static int xf16cam_sensor_probe(I2C_ID bus, const XF16CamSensor *sensor,
 }
 
 __xip_text
-static HAL_Status xf16cam_sensor_write_table(I2C_ID bus, const uint8_t *table,
-					     uint16_t size)
+static HAL_Status xf16cam_sensor_write_table(I2C_ID bus,
+					     const XF16CamSensor *sensor,
+					     const uint8_t *table,
+					     uint16_t size,
+					     int report_error)
 {
 	uint16_t offset;
 
@@ -277,21 +313,22 @@ static HAL_Status xf16cam_sensor_write_table(I2C_ID bus, const uint8_t *table,
 		}
 		for (attempt = 0; attempt < XF16CAM_SENSOR_WRITE_ATTEMPTS; ++attempt) {
 			uint8_t data = value;
-			if (HAL_I2C_SCCB_Master_Transmit_IT(bus, g_selected->address,
+			if (HAL_I2C_SCCB_Master_Transmit_IT(bus, sensor->address,
 			                                  reg, &data) == 1)
 				break;
 			OS_MSleep(2);
 		}
 		if (attempt == XF16CAM_SENSOR_WRITE_ATTEMPTS) {
-			printf("xf16cam camera: %s table write failed at %u\n",
-			       g_selected->name, (unsigned int)(offset / 2));
+			if (report_error)
+				printf("xf16cam camera: %s table write failed at %u\n",
+				       sensor->name, (unsigned int)(offset / 2));
 			return HAL_ERROR;
 		}
 		for (delay = 0; delay < 2; ++delay) {
-			if (g_selected->delay_ms[delay] &&
-			    reg == g_selected->delay_register[delay] &&
-			    value == g_selected->delay_value[delay])
-				OS_MSleep(g_selected->delay_ms[delay]);
+			if (sensor->delay_ms[delay] &&
+			    reg == sensor->delay_register[delay] &&
+			    value == sensor->delay_value[delay])
+				OS_MSleep(sensor->delay_ms[delay]);
 		}
 		if (offset == 0)
 			OS_MSleep(1);
@@ -318,11 +355,11 @@ static HAL_Status xf16cam_sensor_load_table(SENSOR_ConfigParam *cfg)
 		HAL_I2C_DeInit(bus);
 		return HAL_ERROR;
 	}
-	if (xf16cam_sensor_write_table(bus, g_selected->table,
-	                                g_selected->table_size) != HAL_OK ||
+	if (xf16cam_sensor_write_table(bus, g_selected, g_selected->table,
+	                                g_selected->table_size, 1) != HAL_OK ||
 	    (g_selected->post_table &&
-	     xf16cam_sensor_write_table(bus, g_selected->post_table,
-	                                 g_selected->post_table_size) != HAL_OK)) {
+	     xf16cam_sensor_write_table(bus, g_selected, g_selected->post_table,
+	                                 g_selected->post_table_size, 1) != HAL_OK)) {
 		HAL_I2C_DeInit(bus);
 		return HAL_ERROR;
 	}

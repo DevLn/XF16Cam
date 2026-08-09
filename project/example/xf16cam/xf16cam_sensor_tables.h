@@ -12,6 +12,11 @@ extern const uint8_t xf16cam_gc0308_table[];
 #define XF16CAM_GC0308_TABLE_SIZE 510
 extern const uint8_t xf16cam_gc0312_table[];
 #define XF16CAM_GC0312_TABLE_SIZE 578
+extern const uint8_t xf16cam_gc0329_table[];
+#define XF16CAM_GC0329_PROBE_TABLE_SIZE 6
+#define XF16CAM_GC0329_TABLE_SIZE 512
+extern const uint8_t xf16cam_gc0329_vga_table[];
+#define XF16CAM_GC0329_VGA_TABLE_SIZE 24
 extern const uint8_t xf16cam_hi704_table[];
 #define XF16CAM_HI704_TABLE_SIZE 704
 extern const uint8_t xf16cam_sp0a20_table[];
