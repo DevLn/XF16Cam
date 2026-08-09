@@ -8,12 +8,19 @@
 
 #include "xf16cam_config.h"
 
-#define XF16CAM_CONFIG_MAGIC   (0x58464346UL)
-#define XF16CAM_CONFIG_SCHEMA  (1U)
+#define XF16CAM_CONFIG_MAGIC          (0x58464346UL)
+#define XF16CAM_CONFIG_SCHEMA_LEGACY  (1U)
+#define XF16CAM_CONFIG_SCHEMA         (2U)
 
-/* Resolution consumes the first byte reserved by schema 1. Preserve this
- * layout so existing Wi-Fi/media settings remain checksum-compatible. */
-_Static_assert(sizeof(XF16CamConfig) == 116, "XF16Cam schema 1 layout changed");
+/* Schema 2 gives the first byte formerly reserved by schema 1 a defined
+ * meaning. Keep the layout unchanged so schema 1 records can be migrated. */
+_Static_assert(sizeof(XF16CamConfig) == 116, "XF16Cam config layout changed");
+_Static_assert(offsetof(XF16CamConfig, resolution) == 10,
+	       "XF16Cam resolution offset changed");
+_Static_assert(offsetof(XF16CamConfig, ssid) == 12,
+	       "XF16Cam SSID offset changed");
+_Static_assert(offsetof(XF16CamConfig, checksum) == 112,
+	       "XF16Cam checksum offset changed");
 
 static fdcm_handle_t *g_config_store;
 static XF16CamConfig g_configs[2];
@@ -47,16 +54,14 @@ static void xf16cam_config_defaults(XF16CamConfig *config)
 	config->checksum = xf16cam_config_checksum(config);
 }
 
-static int xf16cam_config_valid(const XF16CamConfig *config)
+static int xf16cam_config_storage_valid(const XF16CamConfig *config)
 {
 	if (config->magic != XF16CAM_CONFIG_MAGIC ||
-	    config->schema != XF16CAM_CONFIG_SCHEMA ||
 	    config->length != sizeof(*config) ||
 	    config->wifi_mode < XF16CAM_WIFI_AP ||
 	    config->wifi_mode > XF16CAM_WIFI_STA ||
 	    config->media_mode < XF16CAM_MEDIA_RTSP ||
 	    config->media_mode > XF16CAM_MEDIA_WEB ||
-	    config->resolution > XF16CAM_RESOLUTION_VGA ||
 	    config->ssid[XF16CAM_SSID_MAX_LEN] != '\0' ||
 	    config->psk[XF16CAM_PSK_MAX_LEN] != '\0') {
 		return 0;
@@ -90,10 +95,29 @@ int xf16cam_config_init(void)
 	}
 
 	if (fdcm_read(g_config_store, config, sizeof(*config)) != sizeof(*config) ||
-	    !xf16cam_config_valid(config)) {
+	    !xf16cam_config_storage_valid(config) ||
+	    (config->schema != XF16CAM_CONFIG_SCHEMA_LEGACY &&
+	     config->schema != XF16CAM_CONFIG_SCHEMA) ||
+	    (config->schema == XF16CAM_CONFIG_SCHEMA &&
+	     config->resolution > XF16CAM_RESOLUTION_VGA)) {
 		xf16cam_config_defaults(config);
 		printf("xf16cam config: using defaults (AP mode)\n");
 		return 0;
+	}
+
+	if (config->schema == XF16CAM_CONFIG_SCHEMA_LEGACY) {
+		/* The resolution byte was undefined in schema 1; never infer a
+		 * resolution from it. Preserve the user's settings, but make the first
+		 * resolution selection deterministic and conservative. */
+		config->schema = XF16CAM_CONFIG_SCHEMA;
+		config->resolution = XF16CAM_RESOLUTION_QVGA;
+		config->reserved = 0;
+		config->checksum = xf16cam_config_checksum(config);
+		if (fdcm_write(g_config_store, config, sizeof(*config)) != sizeof(*config)) {
+			printf("xf16cam config: schema 1 migration write failed; using QVGA in RAM\n");
+		} else {
+			printf("xf16cam config: migrated schema 1 to 2 (resolution=QVGA)\n");
+		}
 	}
 
 	printf("xf16cam config: loaded schema=%u wifi=%s media=%s resolution=%s ssid=%s\n",

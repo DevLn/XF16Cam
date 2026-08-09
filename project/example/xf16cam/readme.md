@@ -10,6 +10,8 @@ single-client RTSP stream without PSRAM or an SD card.
 - OTA has been validated end-to-end on XR872 hardware, including retained Wi-Fi
   settings, camera reprobe, audio restart, and management-page recovery.
 - Saved settings use a dedicated FDCM sector and survive firmware reflashing.
+- Schema-1 settings migrate in place with network and media choices preserved;
+  resolution starts conservatively at QVGA because its old reserved byte was undefined.
 - Leaving the password blank for the currently saved secured SSID preserves
   that credential; a blank password for a different SSID selects an open network.
 - A failed STA connection falls back to the setup AP.
