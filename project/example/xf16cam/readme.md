@@ -59,6 +59,8 @@ single-client RTSP stream without PSRAM or an SD card.
   XF16; QVGA is the default and native VGA is selectable.
 - GC0308 (`0x9b`): compacted XR872 SDK VGA table, QVGA by default with selectable
   native VGA; compiled but awaiting matching-sensor validation.
+- GC0309 (`0xa0`): exact XF16 factory 24 MHz VGA table, hardware validated on
+  XF16; QVGA is the default and native VGA is selectable.
 - GC0312 (ID `0xb3:0x10`): exact XF16 factory 24 MHz VGA table, hardware
   validated on XF16; QVGA is the default and native VGA is selectable.
 - HI704 (`0x96`): factory FTY/X5/X6 VGA table, hardware validated on XF16;
@@ -74,12 +76,12 @@ and sync type, so new sensors can override these without changing the SDK.
 Optional descriptor-owned probe tables also cover sensors such as GC0329 whose
 factory probe uses a short reset or wake sequence before reading the ID.
 
-The GC0312 and GC0329 sequences are byte-exact from XF16 factory firmware. The
-Taixin-derived HI704, SP0A20, and SP0828 tables are deliberately limited to
-byte-exact sequences corroborated by the supplied factory-firmware research
-bundle. Alternative SP0828 tables are not included: the FTY/X5/X6 variant
-matches the XR872 A9 family and the fixed 24 MHz sensor clock. Register tables
-live in XIP flash and share one retrying SCCB writer, avoiding per-sensor code
+The GC0309, GC0312, and GC0329 sequences are byte-exact from XF16 factory
+firmware. The Taixin-derived HI704, SP0A20, and SP0828 tables are deliberately
+limited to byte-exact sequences corroborated by the supplied factory-firmware
+research bundle. Alternative SP0828 tables are not included: the FTY/X5/X6
+variant matches the XR872 A9 family and its fixed 24 MHz sensor clock. Register
+tables live in XIP flash and share one retrying SCCB writer, avoiding per-sensor code
 and runtime state. Those three tables were adapted from the camera-driver
 evidence associated with `NonPIayerCharacter/OpenTXW81X`; its repository
 currently has no visible top-level licence, so provenance should be resolved

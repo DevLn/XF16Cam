@@ -10,6 +10,8 @@ extern const uint8_t gc0328c_post_init_reg_tbl[][2];
 
 extern const uint8_t xf16cam_gc0308_table[];
 #define XF16CAM_GC0308_TABLE_SIZE 510
+extern const uint8_t xf16cam_gc0309_table[];
+#define XF16CAM_GC0309_TABLE_SIZE 400
 extern const uint8_t xf16cam_gc0312_table[];
 #define XF16CAM_GC0312_TABLE_SIZE 578
 extern const uint8_t xf16cam_gc0329_table[];
