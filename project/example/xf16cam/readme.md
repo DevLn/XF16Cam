@@ -66,8 +66,8 @@ single-client RTSP stream without PSRAM or an SD card.
 - HI704 (`0x96`): factory FTY/X5/X6 VGA table, hardware validated on XF16;
   QVGA is the default, native VGA is selectable, and its profile selects the
   sensor's required rising PCLK edge.
-- SP0A20 (`0x2b`): factory HQT6 VGA table, QVGA by default with selectable
-  native VGA; compiled but awaiting matching-sensor validation.
+- SP0A20 (`0x2b`): factory HQT6 VGA table, hardware validated on XF16; QVGA is
+  the default and native VGA is selectable.
 - SP0828 (`0x0c`): factory FTY/X5/X6 24 MHz portrait table at 240 x 320;
   hardware validated on XF16.
 
@@ -81,8 +81,8 @@ firmware. The Taixin-derived HI704, SP0A20, and SP0828 tables are deliberately
 limited to byte-exact sequences corroborated by the supplied factory-firmware
 research bundle. Alternative SP0828 tables are not included: the FTY/X5/X6
 variant matches the XR872 A9 family and its fixed 24 MHz sensor clock. Register
-tables live in XIP flash and share one retrying SCCB writer, avoiding per-sensor code
-and runtime state. Those three tables were adapted from the camera-driver
+tables live in XIP flash and share one retrying SCCB writer, avoiding per-sensor
+code and runtime state. Those three tables were adapted from the camera-driver
 evidence associated with `NonPIayerCharacter/OpenTXW81X`; its repository
 currently has no visible top-level licence, so provenance should be resolved
 before redistributing them beyond this research firmware.
