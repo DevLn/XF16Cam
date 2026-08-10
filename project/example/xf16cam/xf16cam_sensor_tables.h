@@ -26,6 +26,8 @@ extern const uint8_t xf16cam_gc0329_vga_table[];
 #define XF16CAM_GC0329_VGA_TABLE_SIZE 24
 extern const uint8_t xf16cam_hi704_table[];
 #define XF16CAM_HI704_TABLE_SIZE 704
+extern const uint8_t xf16cam_sp0a19_table[];
+#define XF16CAM_SP0A19_TABLE_SIZE 544
 extern const uint8_t xf16cam_sp0a20_table[];
 #define XF16CAM_SP0A20_TABLE_SIZE 724
 extern const uint8_t xf16cam_sp0828_table[];
