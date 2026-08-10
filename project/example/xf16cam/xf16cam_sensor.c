@@ -69,6 +69,23 @@ typedef struct {
 /* Every sensor shares one compact probe and register-table backend. */
 __xip_rodata static const XF16CamSensor g_sensors[] = {
 	{
+		.name = "OV7690",
+		.address = 0x21,
+		.bank_register = 0xff,
+		.bank_value = 0xff,
+		.id = { { 0x0a, 0x76 }, { 0x0b, 0x91 } },
+		.id_count = 2,
+		.table = xf16cam_ov7690_table,
+		.table_size = XF16CAM_OV7690_TABLE_SIZE,
+		.init_settle_ms = 500,
+		.input_width = 640,
+		.input_height = 480,
+		.output_width = 320,
+		.output_height = 240,
+		.vga_selectable = 1,
+		.csi = XF16CAM_CSI_DEFAULT,
+	},
+	{
 		.name = "GC0328",
 		.table = (const uint8_t *)gc0328c_init_reg_tbl,
 		.post_table = (const uint8_t *)gc0328c_post_init_reg_tbl,
@@ -343,8 +360,10 @@ static int xf16cam_sensor_probe(I2C_ID bus, const XF16CamSensor *sensor,
 	    xf16cam_sensor_write_table(bus, sensor, sensor->probe_table,
 	                               sensor->probe_table_size, 0) != HAL_OK)
 		return 0;
-	if (HAL_I2C_SCCB_Master_Transmit_IT(bus, sensor->address,
-	                                  sensor->bank_register, &value) != 1)
+	/* Factory descriptors use FF/FF for sensors without a bank selector. */
+	if ((sensor->bank_register != 0xff || sensor->bank_value != 0xff) &&
+	    HAL_I2C_SCCB_Master_Transmit_IT(bus, sensor->address,
+	                                    sensor->bank_register, &value) != 1)
 		return 0;
 	if (sensor->id_count == 0 || sensor->id_count > XF16CAM_SENSOR_ID_COUNT)
 		return 0;
