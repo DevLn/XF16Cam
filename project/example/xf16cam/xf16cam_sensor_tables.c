@@ -321,8 +321,10 @@ __xip_rodata const uint8_t xf16cam_sp0828_table[] = {
 	0xff, 0xff
 };
 
-/* XF16 factory 24 MHz VGA sequence (normalized SHA-256 4fdd8a3a...). */
-__xip_rodata const uint8_t xf16cam_gc0312_table[] = {
+/* Byte-identical XF16 factory GC0310/GC0312 24 MHz VGA sequence. The active
+ * 576 bytes hash to a49f79c3...; normalized with the loader sentinel it hashes
+ * to 4fdd8a3a.... */
+__xip_rodata const uint8_t xf16cam_gc0310_gc0312_table[] = {
 	0xfe, 0xf0, 0xfe, 0xf0, 0xfe, 0x00, 0xfc, 0x0e, 0xfc, 0x0e, 0xf2, 0x08,
 	0xf3, 0x00, 0xf7, 0x1b, 0xf8, 0x03, 0xf9, 0x0e, 0xfa, 0x11, 0x00, 0x2f,
 	0x01, 0x0f, 0x02, 0x04, 0x03, 0x03, 0x04, 0x50, 0x09, 0x00, 0x0a, 0x00,
@@ -440,7 +442,10 @@ XF16CAM_ASSERT_TABLE(xf16cam_gc0309_table, XF16CAM_GC0309_TABLE_SIZE);
 XF16CAM_ASSERT_TABLE(xf16cam_gc0311_table, XF16CAM_GC0311_TABLE_SIZE);
 XF16CAM_ASSERT_TABLE(xf16cam_gc0311_vga_table,
 		       XF16CAM_GC0311_VGA_TABLE_SIZE);
-XF16CAM_ASSERT_TABLE(xf16cam_gc0312_table, XF16CAM_GC0312_TABLE_SIZE);
+XF16CAM_ASSERT_TABLE(xf16cam_gc0310_gc0312_table,
+		       XF16CAM_GC0312_TABLE_SIZE);
+_Static_assert(XF16CAM_GC0310_TABLE_SIZE + 2 == XF16CAM_GC0312_TABLE_SIZE,
+	       "GC0310 active table must omit only the GC0312 loader sentinel");
 XF16CAM_ASSERT_TABLE(xf16cam_gc0329_table, XF16CAM_GC0329_TABLE_SIZE);
 XF16CAM_ASSERT_TABLE(xf16cam_gc0329_vga_table,
 		       XF16CAM_GC0329_VGA_TABLE_SIZE);

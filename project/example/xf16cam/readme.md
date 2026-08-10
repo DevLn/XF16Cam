@@ -61,6 +61,8 @@ single-client RTSP stream without PSRAM or an SD card.
   native VGA; compiled but awaiting matching-sensor validation.
 - GC0309 (`0xa0`): exact XF16 factory 24 MHz VGA table, hardware validated on
   XF16; QVGA is the default and native VGA is selectable.
+- GC0310 (ID `0xa3:0x10`): exact XF16 factory 24 MHz VGA table, hardware
+  validated on XF16; QVGA is the default and native VGA is selectable.
 - GC0311 (`0xbb`): exact XF16 factory 24 MHz VGA table, hardware validated on
   XF16; QVGA is the default and native VGA is selectable.
 - GC0312 (ID `0xb3:0x10`): exact XF16 factory 24 MHz VGA table, hardware
@@ -78,8 +80,9 @@ and sync type, so new sensors can override these without changing the SDK.
 Optional descriptor-owned probe tables also cover sensors such as GC0329 whose
 factory probe uses a short reset or wake sequence before reading the ID.
 
-The GC0309, GC0311, GC0312, and GC0329 sequences are byte-exact from XF16
-factory firmware. The Taixin-derived HI704, SP0A20, and SP0828 tables are deliberately
+The GC0309, GC0310, GC0311, GC0312, and GC0329 sequences are byte-exact from
+XF16 factory firmware; GC0310 and GC0312 share their byte-identical table. The
+Taixin-derived HI704, SP0A20, and SP0828 tables are deliberately
 limited to byte-exact sequences corroborated by the supplied factory-firmware
 research bundle. Alternative SP0828 tables are not included: the FTY/X5/X6
 variant matches the XR872 A9 family and its fixed 24 MHz sensor clock. Register
