@@ -32,6 +32,8 @@ extern const uint8_t xf16cam_sp0a19_table[];
 #define XF16CAM_SP0A19_TABLE_SIZE 544
 extern const uint8_t xf16cam_sp0a20_table[];
 #define XF16CAM_SP0A20_TABLE_SIZE 724
+extern const uint8_t xf16cam_sp0a39_table[];
+#define XF16CAM_SP0A39_TABLE_SIZE 702
 extern const uint8_t xf16cam_sp0828_table[];
 #define XF16CAM_SP0828_TABLE_SIZE 458
 
