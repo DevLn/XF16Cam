@@ -380,10 +380,11 @@ static void xf16cam_http_page(int fd)
 	//Add PTZ control buttons for PTZ version
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 					  "<form method=post action=/api/ptz onsubmit='return submitPtz(event,this)'>"
-					  "<button name=mode value=up>Up</button> "
-					  "<button name=mode value=down>Down</button> "
-					  "<button name=mode value=left>Left</button> "
-					  "<button name=mode value=right>Right</button>"
+					  "<div style='display:grid;grid-template-columns:repeat(3,44px);gap:4px;width:max-content'>"
+					  "<span></span><button name=mode value=up>&#9650;</button><span></span>"
+					  "<button name=mode value=left>&#9664;</button>"
+					  "<button name=mode value=down>&#9660;</button>"
+					  "<button name=mode value=right>&#9654;</button></div>"
 					  "</form>");
 	#endif
 
