@@ -198,6 +198,11 @@ void xf16cam_board_prepare_sleep(void)
 	g_board_sleeping = 1;
 	g_board_ready = 0;
 	HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, GPIO_PIN_LOW);
+	#ifndef NO_PTZ
+	if (g_ptz_ready) {
+		xf16cam_ptz_power_down();
+	}
+	#endif
 }
 
 void xf16cam_board_set_led(int on)
