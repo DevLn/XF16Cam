@@ -52,3 +52,5 @@ __pycache__/
 !/lib/libwpas_wps_hostapd.a
 !/lib/libzbar.a
 !/lib/libwatchpoint.a
+
+/dist
