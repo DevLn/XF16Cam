@@ -1,0 +1,88 @@
+# Builds the XF16Cam XR872 firmware image the same way as
+# .github/workflows/build-xf16cam.yml
+FROM ubuntu:22.04
+
+ARG ARM_GCC_VERSION=8-2019q3
+ARG ARM_GCC_URL=https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-rm/8-2019q3/RC1.1/gcc-arm-none-eabi-8-2019-q3-update-linux.tar.bz2
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    python3 \
+    curl \
+    ca-certificates \
+    xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install the Arm GNU Toolchain (matches carlosperate/arm-none-eabi-gcc-action@v1, release 8-2019-q3)
+RUN mkdir -p /opt/arm-gnu-toolchain \
+    && curl -fsSL "$ARM_GCC_URL" -o /tmp/arm-gcc.tar.bz2 \
+    && tar -xjf /tmp/arm-gcc.tar.bz2 -C /opt/arm-gnu-toolchain --strip-components=1 \
+    && rm -f /tmp/arm-gcc.tar.bz2
+
+ENV PATH="/opt/arm-gnu-toolchain/bin:${PATH}"
+
+WORKDIR /workspace
+COPY . .
+
+# Test RTSP request parser
+RUN cc -std=c11 -Wall -Wextra -Werror \
+    -Iinclude -Iproject/example/xf16cam \
+    tests/xf16cam/test_rtsp_parser.c \
+    project/example/xf16cam/xf16cam_rtsp_parser.c \
+    -o /tmp/xf16cam-rtsp-parser-test \
+    && /tmp/xf16cam-rtsp-parser-test
+
+# Configure XR872 build
+RUN printf '%s\n' \
+    '__CONFIG_CHIP_TYPE ?= xr872' \
+    '__CONFIG_HOSC_TYPE ?= 40' > .config \
+    && chmod +x tools/mkimage
+
+# Build flash image
+RUN make -C project/example/xf16cam/gcc \
+    CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" image
+
+# Build OTA image
+RUN make -C project/example/xf16cam/gcc \
+    CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" image_xz
+
+# Check critical code placement
+RUN python3 tools/xf16cam/check_symbol_placement.py \
+    --elf project/example/xf16cam/gcc/xf16cam.axf \
+    --require-sram xf16cam_http_flash_info \
+    --require-sram xf16cam_http_ota \
+    --require-xip xf16cam_http_start
+
+# Check 1 MiB flash budget
+RUN mkdir -p dist \
+    && python3 tools/xf16cam/check_image_budget.py \
+    --config project/example/xf16cam/image/xr872/image_auto_cal.cfg \
+    --image-dir project/example/xf16cam/image/xr872 \
+    | tee dist/image-budget.txt
+
+# Package flash image
+RUN version="$(sed -n 's/^#define XF16CAM_VERSION "\([^"]*\)"/\1/p' \
+    project/example/xf16cam/xf16cam_version.h | tr -d '\r')" \
+    && test -n "$version" \
+    && mkdir -p dist \
+    && cp project/example/xf16cam/image/xr872/xr_system.img \
+    "dist/xf16cam-xr872-v${version}.img" \
+    && cp project/example/xf16cam/image/xr872/xr_system_img_xz.img \
+    "dist/xf16cam-xr872-v${version}-ota.img" \
+    && arm-none-eabi-size project/example/xf16cam/gcc/xf16cam.axf \
+    | tee dist/size.txt \
+    && arm-none-eabi-size -A project/example/xf16cam/gcc/xf16cam.axf \
+    > dist/sections.txt \
+    && arm-none-eabi-nm -S --size-sort --radix=d \
+    project/example/xf16cam/gcc/xf16cam.axf > dist/symbols.txt \
+    && gzip -9 -c project/example/xf16cam/gcc/xf16cam.map \
+    > dist/xf16cam.map.gz \
+    && sha256sum dist/*.img > dist/SHA256SUMS
+
+# Copy the resulting artifacts out with:
+#   docker build -t xf16cam-build . && \
+#   docker create --name xf16cam-extract xf16cam-build && \
+#   docker cp xf16cam-extract:/workspace/dist ./dist && \
+#   docker rm xf16cam-extract
