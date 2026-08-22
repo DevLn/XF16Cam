@@ -8,6 +8,7 @@
 #include "xf16cam_board.h"
 #include "xf16cam_config.h"
 #include "xf16cam_storage.h"
+#include "xf16cam_ptz.h"
 
 #ifdef NO_PTZ
 #define XF16CAM_LED_PIN              GPIO_PIN_21
@@ -20,26 +21,6 @@
 #define XF16CAM_MODE_BUTTON_PIN      #error "PTZ version does not have a mode button"
 #define XF16CAM_RESET_BUTTON_PIN     GPIO_PIN_19
 #define XF16CAM_GPIO_PORT            GPIO_PORT_B
-
-#define MOTOR_GPIO_PORT                GPIO_PORT_B
-
-//Horizontal/pan motor
-#define HORIZONTAL_MOTOR_BIT_3 GPIO_PIN_3
-#define HORIZONTAL_MOTOR_BIT_2 GPIO_PIN_5
-#define HORIZONTAL_MOTOR_BIT_1 GPIO_PIN_2
-#define HORIZONTAL_MOTOR_BIT_0 GPIO_PIN_6
-
-#define HORIZONTAL_STEPS 50
-
-
-//Vertical/tilt motor
-#define VERTICAL_MOTOR_BIT_3   GPIO_PIN_14
-#define VERTICAL_MOTOR_BIT_2   GPIO_PIN_15
-#define VERTICAL_MOTOR_BIT_1   GPIO_PIN_4
-#define VERTICAL_MOTOR_BIT_0   GPIO_PIN_7
-
-#define VERTICAL_STEPS 35
-
 
 #endif
 
@@ -96,6 +77,11 @@ static void xf16cam_board_task(void *arg)
 		#ifdef NO_PTZ
 		int mode_pressed = xf16cam_board_mode_button_pressed();
 		#else
+		if(g_ptz_ready && g_last_ptz_time != 0 &&
+		   OS_TicksToMSecs(OS_GetTicks()) - g_last_ptz_time > PTZ_IDLE_TIMEOUT_MS) {
+			g_last_ptz_time = 0;
+			xf16cam_ptz_power_down();
+		}
 		int mode_pressed = 0;
 		#endif
 		int reset_pressed = xf16cam_board_reset_button_pressed();
@@ -180,6 +166,8 @@ int xf16cam_board_init(void)
 
 	#ifdef NO_PTZ
 	HAL_GPIO_Init(XF16CAM_GPIO_PORT, XF16CAM_MODE_BUTTON_PIN, &input);
+	#else
+	xf16cam_ptz_init();
 	#endif
 	HAL_GPIO_Init(XF16CAM_GPIO_PORT, XF16CAM_RESET_BUTTON_PIN, &input);
 	HAL_GPIO_Init(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, &output);
@@ -222,6 +210,9 @@ int xf16cam_board_get_led_on(void)
 {
 	return HAL_GPIO_ReadPin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN) == GPIO_PIN_HIGH;
 }
+
+#ifndef NO_PTZ
+#endif
 
 //IR LED control functions for PTZ version
 void xf16cam_board_set_ir_led(int on)

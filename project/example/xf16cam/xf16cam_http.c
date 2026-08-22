@@ -27,6 +27,7 @@
 #include "xf16cam_power.h"
 #include "xf16cam_sensor.h"
 #include "xf16cam_storage.h"
+#include "xf16cam_ptz.h"
 #include "xf16cam_version.h"
 
 #define XF16CAM_HTTP_PORT         (80)
@@ -352,7 +353,11 @@ static void xf16cam_http_page(int fd)
 					  "try{let response=await fetch(form.action,{method:'POST',body:data});"
 					  "if(!response.ok)throw 0;let status=await response.json(),on=!!status[button.name];"
 					  "button.value=on?'false':'true';button.textContent=(button.name=='ir_led_on'?'Turn IR LED ':'Turn LED ')+(on?'off':'on');"
-					  "}catch(e){}finally{button.disabled=false}return false}</script>"
+					  "}catch(e){}finally{button.disabled=false}return false}"
+					  "async function submitPtz(event,form){event.preventDefault();let button=event.submitter;"
+					  "if(!button)return false;button.disabled=true;let data=new URLSearchParams();"
+					  "data.set(button.name,button.value);try{await fetch(form.action,{method:'POST',body:data})}"
+					  "finally{button.disabled=false}return false}</script>"
 					  );
 	length = snprintf(dynamic, sizeof(dynamic),
 	                  "<form method=post action=/api/led onsubmit='return submitLed(event,this)'>"
@@ -362,6 +367,7 @@ static void xf16cam_http_page(int fd)
 					  , xf16cam_board_get_led_on() ? "off" : "on"
 	                  "</form>");
 	xf16cam_http_send_all(fd, dynamic, length);
+	#ifndef NO_PTZ
 	//Add IR LED control button for PTZ version
 	length = snprintf(dynamic, sizeof(dynamic),
 	                  "<form method=post action=/api/ir_led onsubmit='return submitLed(event,this)'>"
@@ -371,6 +377,15 @@ static void xf16cam_http_page(int fd)
 					  , xf16cam_board_get_ir_led_on() ? "off" : "on"
 	                  "</form>");
 	xf16cam_http_send_all(fd, dynamic, length);
+	//Add PTZ control buttons for PTZ version
+	XF16CAM_HTTP_SEND_LITERAL(fd,
+					  "<form method=post action=/api/ptz onsubmit='return submitPtz(event,this)'>"
+					  "<button name=mode value=up>Up</button> "
+					  "<button name=mode value=down>Down</button> "
+					  "<button name=mode value=left>Left</button> "
+					  "<button name=mode value=right>Right</button>"
+					  "</form>");
+	#endif
 
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<form method=post action=/api/media>"
@@ -970,14 +985,30 @@ static int xf16cam_http_handle(int fd)
 		                strcmp(mode, "true") == 0;
 		xf16cam_board_set_ir_led(ir_led_on);
 		xf16cam_http_ir_led_json(fd);
-	}
-	else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/media") == 0) {
+	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/ptz") == 0) {
 		if (xf16cam_form_value(body, "mode", mode, sizeof(mode)) != 0 ||
-		    xf16cam_config_save_media(strcmp(mode, "web") == 0 ? XF16CAM_MEDIA_WEB :
-		                              strcmp(mode, "rtsp") == 0 ? XF16CAM_MEDIA_RTSP : 0) != 0) {
-			xf16cam_http_message(fd, "400 Bad Request", "Invalid camera mode.");
+		    (strcmp(mode, "left") != 0 && strcmp(mode, "right") != 0 &&
+		     strcmp(mode, "up") != 0 && strcmp(mode, "down") != 0)) {
+			xf16cam_http_message(fd, "400 Bad Request", "Invalid PTZ direction.");
 			return XF16CAM_HTTP_KEEP_RUNNING;
 		}
+		if (xf16cam_form_value(body, "mode", mode, sizeof(mode)) == 0){
+			if (strcmp(mode, "left") == 0) {
+				ptz_move_left();
+			} else if (strcmp(mode, "right") == 0) {
+				ptz_move_right();
+			} else if (strcmp(mode, "up") == 0) {
+				ptz_move_up();
+			} else if (strcmp(mode, "down") == 0) {
+				ptz_move_down();
+			} else {
+				xf16cam_http_message(fd, "400 Bad Request", "Invalid PTZ direction.");
+				return XF16CAM_HTTP_KEEP_RUNNING;
+			}
+			xf16cam_http_message(fd, "200 OK", "PTZ command sent.");
+			return XF16CAM_HTTP_KEEP_RUNNING;
+		}
+	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/media") == 0) {
 		if (xf16cam_update_begin() != 0) {
 			xf16cam_http_message(fd, "409 Conflict",
 			                     "Camera mode was saved, but reboot was deferred by another update.");
