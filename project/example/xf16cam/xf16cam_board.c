@@ -9,9 +9,40 @@
 #include "xf16cam_config.h"
 #include "xf16cam_storage.h"
 
+#ifdef NO_PTZ
 #define XF16CAM_LED_PIN              GPIO_PIN_21
 #define XF16CAM_MODE_BUTTON_PIN      GPIO_PIN_15
 #define XF16CAM_RESET_BUTTON_PIN     GPIO_PIN_20
+#define XF16CAM_GPIO_PORT            GPIO_PORT_A
+#else
+#define XF16CAM_LED_PIN              GPIO_PIN_20
+#define XF16CAM_IR_LED_PIN           GPIO_PIN_22
+#define XF16CAM_MODE_BUTTON_PIN      #error "PTZ version does not have a mode button"
+#define XF16CAM_RESET_BUTTON_PIN     GPIO_PIN_19
+#define XF16CAM_GPIO_PORT            GPIO_PORT_B
+
+#define MOTOR_GPIO_PORT                GPIO_PORT_B
+
+//Horizontal/pan motor
+#define HORIZONTAL_MOTOR_BIT_3 GPIO_PIN_3
+#define HORIZONTAL_MOTOR_BIT_2 GPIO_PIN_5
+#define HORIZONTAL_MOTOR_BIT_1 GPIO_PIN_2
+#define HORIZONTAL_MOTOR_BIT_0 GPIO_PIN_6
+
+#define HORIZONTAL_STEPS 50
+
+
+//Vertical/tilt motor
+#define VERTICAL_MOTOR_BIT_3   GPIO_PIN_14
+#define VERTICAL_MOTOR_BIT_2   GPIO_PIN_15
+#define VERTICAL_MOTOR_BIT_1   GPIO_PIN_4
+#define VERTICAL_MOTOR_BIT_0   GPIO_PIN_7
+
+#define VERTICAL_STEPS 35
+
+
+#endif
+
 #define XF16CAM_BUTTON_POLL_MS       (50)
 #define XF16CAM_BUTTON_DEBOUNCE_MS   (100)
 #define XF16CAM_RESET_HOLD_MS        (3000)
@@ -23,13 +54,15 @@ static volatile int g_board_sleeping;
 
 static int xf16cam_button_pressed(GPIO_Pin pin)
 {
-	return HAL_GPIO_ReadPin(GPIO_PORT_A, pin) == GPIO_PIN_LOW;
+	return HAL_GPIO_ReadPin(XF16CAM_GPIO_PORT, pin) == GPIO_PIN_LOW;
 }
 
+#ifdef NO_PTZ
 int xf16cam_board_mode_button_pressed(void)
 {
 	return xf16cam_button_pressed(XF16CAM_MODE_BUTTON_PIN);
 }
+#endif
 
 int xf16cam_board_reset_button_pressed(void)
 {
@@ -60,13 +93,17 @@ static void xf16cam_board_task(void *arg)
 
 	(void)arg;
 	while (1) {
+		#ifdef NO_PTZ
 		int mode_pressed = xf16cam_board_mode_button_pressed();
+		#else
+		int mode_pressed = 0;
+		#endif
 		int reset_pressed = xf16cam_board_reset_button_pressed();
 
 		if (g_board_sleeping) {
 			if (led) {
 				led = 0;
-				HAL_GPIO_WritePin(GPIO_PORT_A, XF16CAM_LED_PIN, GPIO_PIN_LOW);
+				HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, GPIO_PIN_LOW);
 			}
 			OS_MSleep(XF16CAM_BUTTON_POLL_MS);
 			continue;
@@ -76,12 +113,18 @@ static void xf16cam_board_task(void *arg)
 			if (blink_ms >= 250) {
 				blink_ms = 0;
 				led = !led;
-				HAL_GPIO_WritePin(GPIO_PORT_A, XF16CAM_LED_PIN,
+				HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN,
 				                  led ? GPIO_PIN_HIGH : GPIO_PIN_LOW);
 			}
 		} else if (!led) {
 			led = 1;
-			HAL_GPIO_WritePin(GPIO_PORT_A, XF16CAM_LED_PIN, GPIO_PIN_HIGH);
+			#ifdef NO_PTZ
+			// non-PTZ version: LED is status LED, so turn it on when ready
+			HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, GPIO_PIN_HIGH);
+			#else
+			// PTZ version: LED is luming LED, so turn it off when ready
+			HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, GPIO_PIN_LOW);
+			#endif
 		}
 		if (!g_board_ready) {
 			mode_held_ms = 0;
@@ -135,12 +178,18 @@ int xf16cam_board_init(void)
 		.pull = GPIO_PULL_NONE,
 	};
 
-	HAL_GPIO_Init(GPIO_PORT_A, XF16CAM_MODE_BUTTON_PIN, &input);
-	HAL_GPIO_Init(GPIO_PORT_A, XF16CAM_RESET_BUTTON_PIN, &input);
-	HAL_GPIO_Init(GPIO_PORT_A, XF16CAM_LED_PIN, &output);
-	HAL_GPIO_WritePin(GPIO_PORT_A, XF16CAM_LED_PIN, GPIO_PIN_LOW);
+	#ifdef NO_PTZ
+	HAL_GPIO_Init(XF16CAM_GPIO_PORT, XF16CAM_MODE_BUTTON_PIN, &input);
+	#endif
+	HAL_GPIO_Init(XF16CAM_GPIO_PORT, XF16CAM_RESET_BUTTON_PIN, &input);
+	HAL_GPIO_Init(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, &output);
+	HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, GPIO_PIN_LOW);
 	printf("xf16cam board: PA15 mode=%s PA20 reset=%s PA21 status LED\n",
+		#ifdef NO_PTZ
 	       xf16cam_board_mode_button_pressed() ? "pressed" : "released",
+		#else
+	       "N/A",
+		#endif
 	       xf16cam_board_reset_button_pressed() ? "pressed" : "released");
 
 	if (OS_ThreadCreate(&g_board_thread, "xf16cam-board", xf16cam_board_task,
@@ -160,7 +209,36 @@ void xf16cam_board_prepare_sleep(void)
 {
 	g_board_sleeping = 1;
 	g_board_ready = 0;
-	HAL_GPIO_WritePin(GPIO_PORT_A, XF16CAM_LED_PIN, GPIO_PIN_LOW);
+	HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, GPIO_PIN_LOW);
+}
+
+void xf16cam_board_set_led(int on)
+{
+	HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN,
+	                  on ? GPIO_PIN_HIGH : GPIO_PIN_LOW);
+}
+
+int xf16cam_board_get_led_on(void)
+{
+	return HAL_GPIO_ReadPin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN) == GPIO_PIN_HIGH;
+}
+
+//IR LED control functions for PTZ version
+void xf16cam_board_set_ir_led(int on)
+{
+	#ifdef XF16CAM_IR_LED_PIN
+	HAL_GPIO_WritePin(GPIO_PORT_A, XF16CAM_IR_LED_PIN,
+	                  on ? GPIO_PIN_HIGH : GPIO_PIN_LOW);
+	#endif
+}
+
+int xf16cam_board_get_ir_led_on(void)
+{
+	#ifdef XF16CAM_IR_LED_PIN
+	return HAL_GPIO_ReadPin(GPIO_PORT_A, XF16CAM_IR_LED_PIN) == GPIO_PIN_HIGH;
+	#else
+	return 0;
+	#endif
 }
 
 __xip_text

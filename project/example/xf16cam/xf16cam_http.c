@@ -344,6 +344,34 @@ static void xf16cam_http_page(int fd)
 		                  "catch(e){if(a===c){a=r=null;b.textContent='Listen';s.textContent='Audio connection failed';"
 		                  "try{if(c)await c.close()}catch(e){}}}}</script>");
 	}
+	//Add LED control button after the audio section
+	XF16CAM_HTTP_SEND_LITERAL(fd,
+					  "<script>async function submitLed(event,form){event.preventDefault();"
+					  "let button=form.querySelector('button');button.disabled=true;"
+					  "let data=new URLSearchParams();data.set(button.name,button.value);"
+					  "try{let response=await fetch(form.action,{method:'POST',body:data});"
+					  "if(!response.ok)throw 0;let status=await response.json(),on=!!status[button.name];"
+					  "button.value=on?'false':'true';button.textContent=(button.name=='ir_led_on'?'Turn IR LED ':'Turn LED ')+(on?'off':'on');"
+					  "}catch(e){}finally{button.disabled=false}return false}</script>"
+					  );
+	length = snprintf(dynamic, sizeof(dynamic),
+	                  "<form method=post action=/api/led onsubmit='return submitLed(event,this)'>"
+	                  "<button name=led_on value=%s>"
+					  "Turn LED %s</button> "
+					  , xf16cam_board_get_led_on() ? "false" : "true"
+					  , xf16cam_board_get_led_on() ? "off" : "on"
+	                  "</form>");
+	xf16cam_http_send_all(fd, dynamic, length);
+	//Add IR LED control button for PTZ version
+	length = snprintf(dynamic, sizeof(dynamic),
+	                  "<form method=post action=/api/ir_led onsubmit='return submitLed(event,this)'>"
+	                  "<button name=ir_led_on value=%s>"
+					  "Turn IR LED %s</button> "
+					  , xf16cam_board_get_ir_led_on() ? "false" : "true"
+					  , xf16cam_board_get_ir_led_on() ? "off" : "on"
+	                  "</form>");
+	xf16cam_http_send_all(fd, dynamic, length);
+
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<form method=post action=/api/media>"
 	                  "<button name=mode value=web onclick='videoStop(1)'>Browser video</button> "
@@ -435,7 +463,11 @@ static void xf16cam_http_page(int fd)
 	                  (unsigned long)((g_flash_jedec >> 8) & 0xff),
 	                  (unsigned long)((g_flash_jedec >> 16) & 0xff),
 	                  (unsigned long)(g_flash_size / 1024),
+#ifdef NO_PTZ
 	                  xf16cam_board_mode_button_pressed() ? "pressed" : "released",
+#else
+	                  "N/A",
+#endif
 	                  xf16cam_board_reset_button_pressed() ? "pressed" : "released");
 	xf16cam_http_send_all(fd, dynamic, length);
 	length = snprintf(dynamic, sizeof(dynamic),
@@ -504,6 +536,32 @@ static void xf16cam_http_page(int fd)
 	                  "let v=$('#video');if(v){v.onerror=videoRetry;videoStart()}"
 	                  "D.addEventListener('visibilitychange',()=>D.hidden?videoStop():videoStart());"
 	                  "tab('live');meter()</script></main></body></html>");
+}
+
+__xip_text
+static void xf16cam_http_led_json(int fd)
+{
+	int led_on = xf16cam_board_get_led_on();
+	char body[64];
+	int length = snprintf(body, sizeof(body),
+	                      "{\"led_on\":%s}",
+	                      led_on ? "true" : "false");
+
+	xf16cam_http_begin_length(fd, "200 OK", "application/json", length);
+	xf16cam_http_send_all(fd, body, length);
+}
+
+__xip_text
+static void xf16cam_http_ir_led_json(int fd)
+{
+	int ir_led_on = xf16cam_board_get_ir_led_on();
+	char body[64];
+	int length = snprintf(body, sizeof(body),
+	                      "{\"ir_led_on\":%s}",
+	                      ir_led_on ? "true" : "false");
+
+	xf16cam_http_begin_length(fd, "200 OK", "application/json", length);
+	xf16cam_http_send_all(fd, body, length);
 }
 
 __xip_text
@@ -856,7 +914,12 @@ static int xf16cam_http_handle(int fd)
 		xf16cam_http_scan_json(fd);
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/audio") == 0) {
 		xf16cam_http_audio_json(fd);
-	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/power") == 0) {
+	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/led") == 0) {
+		xf16cam_http_led_json(fd);
+	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/ir_led") == 0) {
+		xf16cam_http_ir_led_json(fd);
+	}
+	else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/power") == 0) {
 		xf16cam_http_power_json(fd);
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/wifi") == 0) {
 		int invalid = xf16cam_form_value(body, "ssid", ssid, sizeof(ssid)) != 0 ||
@@ -897,7 +960,18 @@ static int xf16cam_http_handle(int fd)
 		}
 		xf16cam_http_message(fd, "200 OK", "Open AP restored. Rebooting...");
 		return XF16CAM_HTTP_COLD_REBOOT;
-	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/media") == 0) {
+	} else if(strcmp(method, "POST") == 0 && strcmp(path, "/api/led") == 0) {
+		int led_on = xf16cam_form_value(body, "led_on", mode, sizeof(mode)) == 0 &&
+		             strcmp(mode, "true") == 0;
+		xf16cam_board_set_led(led_on);
+		xf16cam_http_led_json(fd);
+	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/ir_led") == 0) {
+		int ir_led_on = xf16cam_form_value(body, "ir_led_on", mode, sizeof(mode)) == 0 &&
+		                strcmp(mode, "true") == 0;
+		xf16cam_board_set_ir_led(ir_led_on);
+		xf16cam_http_ir_led_json(fd);
+	}
+	else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/media") == 0) {
 		if (xf16cam_form_value(body, "mode", mode, sizeof(mode)) != 0 ||
 		    xf16cam_config_save_media(strcmp(mode, "web") == 0 ? XF16CAM_MEDIA_WEB :
 		                              strcmp(mode, "rtsp") == 0 ? XF16CAM_MEDIA_RTSP : 0) != 0) {
