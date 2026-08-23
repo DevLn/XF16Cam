@@ -586,6 +586,46 @@ int xf16cam_sensor_configure_camera(uint16_t configured_width,
 	return 0;
 }
 
+static const uint8_t sp0a39_night_mode[] = {
+    0xFD, 0x01,   // select page 1
+    0x47, 0x20,   // enable night/monochrome mode
+    0xFD, 0x00,   // return to page 0
+};
+
+static const uint8_t sp0a39_day_mode[] = {
+    0xFD, 0x01,   // select page 1
+    0x47, 0x00,   // restore daytime/colour mode
+    0xFD, 0x00,   // return to page 0
+};
+
+void xf16cam_sensor_switch_cam_sensor_mode(int night_mode)
+{
+	I2C_ID bus = I2C0_ID;
+	const uint8_t *sequence;
+	uint16_t length;
+	uint16_t offset;
+	int status = 1;
+
+	if (!g_selected)
+		return;
+	if (!g_selected->name || strcmp(g_selected->name, "SP0A39") != 0)
+		return;
+
+	/* The sensor load path leaves I2C0 initialized for capture, so reuse the
+	 * open bus here instead of re-initializing it. */
+	sequence = night_mode ? sp0a39_night_mode : sp0a39_day_mode;
+	length = night_mode ? sizeof(sp0a39_night_mode) : sizeof(sp0a39_day_mode);
+	for (offset = 0; offset + 1 < length && status == 1; offset += 2) {
+		uint8_t reg = sequence[offset];
+		uint8_t value = sequence[offset + 1];
+
+		status = HAL_I2C_SCCB_Master_Transmit_IT(bus, g_selected->address,
+		                                        reg, &value);
+	}
+	if (status != 1)
+		printf("xf16cam camera: SP0A39 mode switch failed\n");
+}
+
 const char *xf16cam_sensor_name(void)
 {
 	return g_selected ? g_selected->name : "Not detected";

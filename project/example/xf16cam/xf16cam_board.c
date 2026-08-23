@@ -8,6 +8,7 @@
 #include "xf16cam_board.h"
 #include "xf16cam_config.h"
 #include "xf16cam_storage.h"
+#include "xf16cam_sensor.h"
 #include "xf16cam_ptz.h"
 
 #ifdef NO_PTZ
@@ -175,6 +176,8 @@ int xf16cam_board_init(void)
 	HAL_GPIO_Init(XF16CAM_GPIO_PORT, XF16CAM_MODE_BUTTON_PIN, &input);
 	#else
 	xf16cam_ptz_init();
+	HAL_GPIO_Init(GPIO_PORT_A, XF16CAM_IR_LED_PIN, &output);
+	HAL_GPIO_WritePin(GPIO_PORT_A, XF16CAM_IR_LED_PIN, GPIO_PIN_LOW);
 	#endif
 	HAL_GPIO_Init(XF16CAM_GPIO_PORT, XF16CAM_RESET_BUTTON_PIN, &input);
 	HAL_GPIO_Init(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, &output);
@@ -234,6 +237,7 @@ void xf16cam_board_set_ir_led(int on)
 	#ifdef XF16CAM_IR_LED_PIN
 	HAL_GPIO_WritePin(GPIO_PORT_A, XF16CAM_IR_LED_PIN,
 	                  on ? GPIO_PIN_HIGH : GPIO_PIN_LOW);
+	xf16cam_sensor_switch_cam_sensor_mode(on);
 	#endif
 }
 
