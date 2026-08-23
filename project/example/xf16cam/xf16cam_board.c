@@ -78,7 +78,7 @@ static void xf16cam_board_task(void *arg)
 		int mode_pressed = xf16cam_board_mode_button_pressed();
 		#else
 		if(g_ptz_ready && g_last_ptz_time != 0 &&
-		   OS_TicksToMSecs(OS_GetTicks()) - g_last_ptz_time > PTZ_IDLE_TIMEOUT_MS) {
+			OS_TicksToMSecs(OS_GetTicks()) - g_last_ptz_time > PTZ_IDLE_TIMEOUT_MS) {
 			g_last_ptz_time = 0;
 			xf16cam_ptz_power_down();
 		}

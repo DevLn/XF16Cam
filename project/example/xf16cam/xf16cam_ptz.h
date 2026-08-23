@@ -6,6 +6,7 @@ void ptz_move_left(void);
 void ptz_move_right(void);
 void ptz_move_up(void);
 void ptz_move_down(void);
+void ptz_move_home(void);
 
 extern volatile int g_last_ptz_time;
 extern volatile int g_ptz_ready;

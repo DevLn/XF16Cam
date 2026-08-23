@@ -14,6 +14,7 @@
 #define HORIZONTAL_MOTOR_BIT_0 GPIO_PIN_6
 
 #define HORIZONTAL_STEPS 50
+#define HORIZONTAL_HOME_STEPS 4096
 
 
 //Vertical/tilt motor
@@ -23,6 +24,7 @@
 #define VERTICAL_MOTOR_BIT_0   GPIO_PIN_7
 
 #define VERTICAL_STEPS 35
+#define VERTICAL_HOME_STEPS 1350
 #define PTZ_STEP_DELAY_MS 2
 
 volatile int g_ptz_ready;
@@ -130,6 +132,28 @@ void ptz_move_up(void)
 void ptz_move_down(void)
 {
 	ptz_move(g_vertical_motor_pins, &g_vertical_step, VERTICAL_STEPS, -1);
+}
+
+void ptz_move_home(void)
+{
+	if (!g_ptz_ready) {
+		xf16cam_ptz_init();
+	}
+	g_last_ptz_time = OS_TicksToMSecs(OS_GetTicks());
+	printf("xf16cam PTZ: homing to mechanical stops\n");
+	ptz_move(g_horizontal_motor_pins, &g_horizontal_step,
+	         HORIZONTAL_HOME_STEPS, -1);
+	ptz_move(g_vertical_motor_pins, &g_vertical_step,
+	         VERTICAL_HOME_STEPS, -1);
+
+	/* Release both end stops by one normal movement increment. */
+	ptz_move(g_horizontal_motor_pins, &g_horizontal_step,
+	         HORIZONTAL_STEPS, 1);
+	ptz_move(g_vertical_motor_pins, &g_vertical_step,
+	         VERTICAL_STEPS, 1);
+	g_horizontal_step = 0;
+	g_vertical_step = 0;
+	printf("xf16cam PTZ: homing complete\n");
 }
 
 #endif
