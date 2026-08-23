@@ -16,6 +16,12 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
+    strategy:
+      matrix:
+        build_variant: [ptz, no_ptz]
+    env:
+      BUILD_VARIANT: ${{ matrix.build_variant }}
+      PRJ_EXTRA_SYMBOLS: ${{ matrix.build_variant == 'no_ptz' && '-DNO_PTZ' || '' }}
 
     steps:
       - name: Check out source
@@ -48,13 +54,15 @@ jobs:
         shell: bash
         run: |
           make -C project/example/xf16cam/gcc \
-            CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" image
+            CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" \
+            PRJ_EXTRA_SYMBOLS="$PRJ_EXTRA_SYMBOLS" image
 
       - name: Build OTA image
         shell: bash
         run: |
           make -C project/example/xf16cam/gcc \
-            CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" image_xz
+            CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" \
+            PRJ_EXTRA_SYMBOLS="$PRJ_EXTRA_SYMBOLS" image_xz
 
       - name: Check critical code placement
         shell: bash
@@ -87,9 +95,9 @@ jobs:
           test -n "$version"
           mkdir -p dist
           cp project/example/xf16cam/image/xr872/xr_system.img \
-            "dist/xf16cam-xr872-v${version}.img"
+            "dist/xf16cam-${BUILD_VARIANT}-xr872-v${version}.img"
           cp project/example/xf16cam/image/xr872/xr_system_img_xz.img \
-            "dist/xf16cam-xr872-v${version}-ota.img"
+            "dist/xf16cam-${BUILD_VARIANT}-xr872-v${version}-ota.img"
           arm-none-eabi-size project/example/xf16cam/gcc/xf16cam.axf \
             | tee dist/size.txt
           arm-none-eabi-size -A project/example/xf16cam/gcc/xf16cam.axf \
@@ -104,7 +112,7 @@ jobs:
       - name: Upload flash image
         uses: actions/upload-artifact@v4
         with:
-          name: xf16cam-xr872-v${{ env.XF16CAM_VERSION }}-${{ github.sha }}
+          name: xf16cam-${{ matrix.build_variant }}-xr872-${{ github.sha }}
           path: dist/
           if-no-files-found: error
           compression-level: 0
