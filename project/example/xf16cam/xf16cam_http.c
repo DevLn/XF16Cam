@@ -346,12 +346,12 @@ static void xf16cam_http_page(int fd)
 		                  "catch(e){if(a===c){a=r=null;b.textContent='Listen';s.textContent='Audio connection failed';"
 		                  "try{if(c)await c.close()}catch(e){}}}}</script>");
 	}
-		XF16CAM_HTTP_SEND_LITERAL(fd,
-		                  "<form method=post action=/api/media>"
-		                  "<button name=mode value=web onclick='videoStop(1)'>Browser video</button> "
-		                  "<button name=mode value=rtsp onclick='videoStop(1)'>RTSP</button></form>"
-		                  "<small>Changing mode reboots.</small></div><div>");
-	//Add LED control button after the audio section
+	XF16CAM_HTTP_SEND_LITERAL(fd,
+						"<form method=post action=/api/media>"
+						"<button name=mode value=web onclick='videoStop(1)'>Browser video</button> "
+						"<button name=mode value=rtsp onclick='videoStop(1)'>RTSP</button></form>"
+						"<small>Changing mode reboots.</small></div><div>");
+	//Add LED control button
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 					  "<script>async function submitLed(event,form){event.preventDefault();"
 					  "let button=form.querySelector('button');button.disabled=true;"
@@ -500,6 +500,7 @@ static void xf16cam_http_page(int fd)
 	                  (unsigned long)xf16cam_board_stack_min_free());
 	xf16cam_http_send_all(fd, dynamic, length);
 	xf16cam_http_runtime(fd, dynamic, sizeof(dynamic));
+	//TODO update pin map and power info for PTZ version
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<section class=card><h2>XF16 pin map</h2><div class=grid>"
 	                  "<b>Camera CSI</b><span>PA0-PA11</span>"
@@ -999,6 +1000,10 @@ static int xf16cam_http_handle(int fd)
 			xf16cam_http_message(fd, "400 Bad Request", "Invalid PTZ direction.");
 			return XF16CAM_HTTP_KEEP_RUNNING;
 		}
+		#ifdef NO_PTZ
+		xf16cam_http_message(fd, "501 Not Implemented", "PTZ is not supported on this board.");
+		return XF16CAM_HTTP_KEEP_RUNNING;
+		#else
 		if (xf16cam_form_value(body, "mode", mode, sizeof(mode)) == 0){
 			if (strcmp(mode, "left") == 0) {
 				ptz_move_left();
@@ -1017,6 +1022,7 @@ static int xf16cam_http_handle(int fd)
 			xf16cam_http_message(fd, "200 OK", "PTZ command sent.");
 			return XF16CAM_HTTP_KEEP_RUNNING;
 		}
+		#endif
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/media") == 0) {
 			if (xf16cam_form_value(body, "mode", mode, sizeof(mode)) != 0 ||
 				xf16cam_config_save_media(strcmp(mode, "web") == 0 ? XF16CAM_MEDIA_WEB :

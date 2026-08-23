@@ -4,6 +4,7 @@ FROM ubuntu:22.04
 
 ARG ARM_GCC_VERSION=8-2019q3
 ARG ARM_GCC_URL=https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-rm/8-2019q3/RC1.1/gcc-arm-none-eabi-8-2019-q3-update-linux.tar.bz2
+ARG BUILD_VARIANT=ptz
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -40,13 +41,19 @@ RUN printf '%s\n' \
     '__CONFIG_HOSC_TYPE ?= 40' > .config \
     && chmod +x tools/mkimage
 
-# Build flash image
-RUN make -C project/example/xf16cam/gcc \
-    CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" image
-
-# Build OTA image
-RUN make -C project/example/xf16cam/gcc \
-    CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" image_xz
+# Build flash and OTA images. Pass BUILD_VARIANT=no_ptz for the fixed-camera
+# board; the default PTZ build leaves NO_PTZ undefined.
+RUN case "$BUILD_VARIANT" in \
+    ptz) symbols= ;; \
+    no_ptz) symbols=-DNO_PTZ ;; \
+    *) echo "Invalid BUILD_VARIANT: $BUILD_VARIANT (use ptz or no_ptz)" >&2; exit 1 ;; \
+    esac \
+    && make -C project/example/xf16cam/gcc \
+    CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" \
+    PRJ_EXTRA_SYMBOLS="$symbols" image \
+    && make -C project/example/xf16cam/gcc \
+    CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" \
+    PRJ_EXTRA_SYMBOLS="$symbols" image_xz
 
 # Check critical code placement
 RUN python3 tools/xf16cam/check_symbol_placement.py \
@@ -68,9 +75,9 @@ RUN version="$(sed -n 's/^#define XF16CAM_VERSION "\([^"]*\)"/\1/p' \
     && test -n "$version" \
     && mkdir -p dist \
     && cp project/example/xf16cam/image/xr872/xr_system.img \
-    "dist/xf16cam-xr872-v${version}.img" \
+    "dist/xf16cam-${BUILD_VARIANT}-xr872-v${version}.img" \
     && cp project/example/xf16cam/image/xr872/xr_system_img_xz.img \
-    "dist/xf16cam-xr872-v${version}-ota.img" \
+    "dist/xf16cam-${BUILD_VARIANT}-xr872-v${version}-ota.img" \
     && arm-none-eabi-size project/example/xf16cam/gcc/xf16cam.axf \
     | tee dist/size.txt \
     && arm-none-eabi-size -A project/example/xf16cam/gcc/xf16cam.axf \
@@ -82,7 +89,7 @@ RUN version="$(sed -n 's/^#define XF16CAM_VERSION "\([^"]*\)"/\1/p' \
     && sha256sum dist/*.img > dist/SHA256SUMS
 
 # Copy the resulting artifacts out with:
-#   docker build -t xf16cam-build . && \
+#   docker build --build-arg BUILD_VARIANT=ptz -t xf16cam-build . && \
 #   docker create --name xf16cam-extract xf16cam-build && \
 #   docker cp xf16cam-extract:/workspace/dist ./dist && \
 #   docker rm xf16cam-extract
