@@ -351,6 +351,7 @@ static void xf16cam_http_page(int fd)
 						"<button name=mode value=web onclick='videoStop(1)'>Browser video</button> "
 						"<button name=mode value=rtsp onclick='videoStop(1)'>RTSP</button></form>"
 						"<small>Changing mode reboots.</small></div><div>");
+	#ifndef NO_PTZ
 	//Add LED control button
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 					  "<script>async function submitLed(event,form){event.preventDefault();"
@@ -373,7 +374,6 @@ static void xf16cam_http_page(int fd)
 					  , xf16cam_board_get_led_on() ? "off" : "on"
 	                  "</form>");
 	xf16cam_http_send_all(fd, dynamic, length);
-	#ifndef NO_PTZ
 	//Add IR LED control button for PTZ version
 	length = snprintf(dynamic, sizeof(dynamic),
 	                  "<form class=led method=post action=/api/ir_led onsubmit='return submitLed(event,this)'>"
@@ -500,19 +500,29 @@ static void xf16cam_http_page(int fd)
 	                  (unsigned long)xf16cam_board_stack_min_free());
 	xf16cam_http_send_all(fd, dynamic, length);
 	xf16cam_http_runtime(fd, dynamic, sizeof(dynamic));
-	//TODO update pin map and power info for PTZ version
+
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<section class=card><h2>XF16 pin map</h2><div class=grid>"
 	                  "<b>Camera CSI</b><span>PA0-PA11</span>"
 	                  "<b>Camera control</b><span>PA14</span>"
+					  #ifdef NO_PTZ
 	                  "<b>Status LED</b><span>PA21</span>"
+					  #else
+					  "<b>Illumination LED</b><span>PB20</span>"
+					  "<b>IR LED</b><span>PA22</span>"
+					  #endif
 	                  "<b>Battery sense</b><span>PA16 / ADC6</span>"
 	                  "<b>Camera / SD power rail</b><span>PA23</span>"
 	                  "<b>SD card</b><span>PB16 CMD, PB17 D0, PB18 CLK</span>"
 	                  "<b>Console</b><span>PB0 TX, PB1 RX</span>"
 	                  "<b>SPI flash</b><span>PB2-PB7</span>"
+					  #ifdef NO_PTZ
 	                  "<b>Mode button</b><span>PA15; short press switches Web/RTSP</span>"
 	                  "<b>Setup button</b><span>PA20; hold 3 seconds to restore AP</span>"
+					  #else
+	                  "<b>PTZ control</b><span>PB2-PB7</span>"
+	                  "<b>Setup button</b><span>PB19; hold 3 seconds to restore AP</span>"
+					  #endif
 	                  "</div></section><section class=card><h2>Power</h2><div class=grid>"
 	                  "<b>Battery input</b><span id=battery>");
 	if (power->valid) {

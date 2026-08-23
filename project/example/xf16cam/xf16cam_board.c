@@ -151,6 +151,13 @@ static void xf16cam_board_task(void *arg)
 	}
 }
 
+
+// Pass the port prefix and numeric pin as adjacent printf arguments.
+#define GPIO_PORT_TEXT(port) \
+	(((port) == GPIO_PORT_A) ? "PA" : \
+	 ((port) == GPIO_PORT_B) ? "PB" : "P?")
+#define GPIO_TXT(port, pin) GPIO_PORT_TEXT(port), (unsigned int)(pin)
+
 int xf16cam_board_init(void)
 {
 	GPIO_InitParam input = {
@@ -172,13 +179,15 @@ int xf16cam_board_init(void)
 	HAL_GPIO_Init(XF16CAM_GPIO_PORT, XF16CAM_RESET_BUTTON_PIN, &input);
 	HAL_GPIO_Init(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, &output);
 	HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, GPIO_PIN_LOW);
-	printf("xf16cam board: PA15 mode=%s PA20 reset=%s PA21 status LED\n",
+	printf("xf16cam board: PA15 mode=%s PA20 reset=%s %s%u status LED\n",
 		#ifdef NO_PTZ
 	       xf16cam_board_mode_button_pressed() ? "pressed" : "released",
 		#else
 	       "N/A",
 		#endif
-	       xf16cam_board_reset_button_pressed() ? "pressed" : "released");
+		xf16cam_board_reset_button_pressed() ? "pressed" : "released",
+		GPIO_TXT(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN)
+	);
 
 	if (OS_ThreadCreate(&g_board_thread, "xf16cam-board", xf16cam_board_task,
 	                    NULL, OS_THREAD_PRIO_APP, XF16CAM_BOARD_STACK_SIZE) != OS_OK) {

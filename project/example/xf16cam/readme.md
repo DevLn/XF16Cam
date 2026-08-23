@@ -35,7 +35,9 @@ single-client RTSP stream without PSRAM or an SD card.
 - Browser MJPEG reconnects after a transient failure, and transmit-only MJPEG
   and PCMU workers detect a closed browser without waiting for TCP retries.
 - PA15 short-press switches Web/RTSP mode; PA20 held for three seconds restores
-  the open setup AP. PA21 blinks during startup and stays on when services are ready.
+  the open setup AP. PA21 blinks during startup and stays on when services are ready
+  in case of NO_PTZ. PB20 blinks during startup and will be turned off when services
+  are ready in case of PTZ version, because it is a white luming LED.
 - An optional one-bit SD card can be mounted, inspected, and safely ejected from
   the web page. Camera and storage share the PA23 rail through reference-counted
   ownership; the page reports total/free space and can explicitly format FAT32.
@@ -119,7 +121,9 @@ for serial recovery and reflashing.
 ## Confirmed XF16 hardware
 
 - Camera CSI: PA0-PA11; camera control: PA14; camera power rail: PA23
-- Factory status LED: PA21; mode button: PA15; setup/reset button: PA20
+- Factory status LED in case of NO_PTZ version: PA21; mode button: PA15; setup/reset button: PA20
+- White/fill/"luming" LED in case of PTZ version: PB20; no mode button; setup/reset button: PB19
+- IR illumination LED in case of PTZ version: PA22
 - Microphone: XR872 internal codec analog microphone (AMIC) input, not a GPIO
 - SD card: PB16 CMD, PB17 D0, PB18 CLK
 - Console: PB0 TX, PB1 RX; SPI flash: PB2-PB7
