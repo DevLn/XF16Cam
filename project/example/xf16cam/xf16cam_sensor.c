@@ -9,6 +9,8 @@
 #include "xf16cam_sensor.h"
 #include "xf16cam_sensor_tables.h"
 
+static volatile int g_sensor_night_mode;
+
 #define XF16CAM_SENSOR_SETTLE_MS (100)
 #define XF16CAM_SENSOR_WRITE_ATTEMPTS (4)
 #define XF16CAM_SENSOR_ID_COUNT (2)
@@ -583,7 +585,11 @@ int xf16cam_sensor_configure_camera(uint16_t configured_width,
 	       (unsigned int)g_selected->csi.href_pol,
 	       (unsigned int)g_selected->csi.clk_pol,
 	       (unsigned int)g_selected->csi.sync_type);
-	return 0;
+
+        if (g_sensor_night_mode) {
+          xf16cam_sensor_switch_cam_sensor_mode(1);
+        }
+        return 0;
 }
 
 static const uint8_t sp0a39_night_mode[] = {
@@ -610,6 +616,8 @@ void xf16cam_sensor_switch_cam_sensor_mode(int night_mode)
 		return;
 	if (!g_selected->name || strcmp(g_selected->name, "SP0A39") != 0)
 		return;
+
+	g_sensor_night_mode = night_mode;
 
 	/* The sensor load path leaves I2C0 initialized for capture, so reuse the
 	 * open bus here instead of re-initializing it. */

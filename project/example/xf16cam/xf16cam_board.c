@@ -1,6 +1,9 @@
 #include <stdio.h>
+#include <stdint.h>
+#include <string.h>
 
 #include "kernel/os/os.h"
+#include "driver/chip/hal_adc.h"
 #include "driver/chip/hal_gpio.h"
 #include "driver/chip/hal_prcm.h"
 #include "driver/chip/hal_wdg.h"
@@ -29,6 +32,12 @@
 #define XF16CAM_BUTTON_DEBOUNCE_MS   (100)
 #define XF16CAM_RESET_HOLD_MS        (3000)
 #define XF16CAM_BOARD_STACK_SIZE     (1024)
+#ifndef NO_PTZ
+#define XF16CAM_CDS_CHANNEL           ADC_CHANNEL_5
+#define XF16CAM_CDS_SAMPLES           (10U)
+#define XF16CAM_CDS_DARK_THRESHOLD    (2000U)
+#define XF16CAM_CDS_CHECK_MS          (5000U)
+#endif
 
 static OS_Thread_t g_board_thread;
 static volatile int g_board_ready;
@@ -51,6 +60,46 @@ int xf16cam_board_reset_button_pressed(void)
 	return xf16cam_button_pressed(XF16CAM_RESET_BUTTON_PIN);
 }
 
+#ifndef NO_PTZ
+static int xf16cam_board_cds_is_dark(void)
+{
+	ADC_InitParam param;
+	uint16_t samples[XF16CAM_CDS_SAMPLES];
+	uint32_t sample;
+	uint32_t total = 0;
+	unsigned int index;
+
+	memset(&param, 0, sizeof(param));
+	param.delay = 10;
+	param.freq = 500000;
+	param.vref_mode = 1;
+	param.mode = ADC_CONTI_CONV;
+	if (HAL_ADC_Init(&param) != HAL_OK)
+		return -1;
+	for (index = 0; index < XF16CAM_CDS_SAMPLES; ++index) {
+		if (HAL_ADC_Conv_Polling(XF16CAM_CDS_CHANNEL, &sample, 100) != HAL_OK) {
+			HAL_ADC_DeInit();
+			return -1;
+		}
+		samples[index] = (uint16_t)(sample & 0xfff);
+	}
+	HAL_ADC_DeInit();
+	for (index = 1; index < XF16CAM_CDS_SAMPLES; ++index) {
+		uint16_t value = samples[index];
+		unsigned int sorted = index;
+
+		while (sorted > 0 && samples[sorted - 1] > value) {
+			samples[sorted] = samples[sorted - 1];
+			--sorted;
+		}
+		samples[sorted] = value;
+	}
+	for (index = 1; index < XF16CAM_CDS_SAMPLES - 1; ++index)
+		total += samples[index];
+	return total / (XF16CAM_CDS_SAMPLES - 2U) > XF16CAM_CDS_DARK_THRESHOLD;
+}
+#endif
+
 static void xf16cam_board_reboot(void)
 {
 	if (xf16cam_update_begin() != 0) {
@@ -69,6 +118,7 @@ static void xf16cam_board_task(void *arg)
 	unsigned int mode_held_ms = 0;
 	unsigned int reset_held_ms = 0;
 	unsigned int blink_ms = 0;
+	unsigned int cds_elapsed_ms = 0;
 	int mode_handled = 0;
 	int reset_handled = 0;
 	int led = 0;
@@ -119,6 +169,15 @@ static void xf16cam_board_task(void *arg)
 			OS_MSleep(XF16CAM_BUTTON_POLL_MS);
 			continue;
 		}
+		#ifndef NO_PTZ
+		cds_elapsed_ms += XF16CAM_BUTTON_POLL_MS;
+		if (cds_elapsed_ms >= XF16CAM_CDS_CHECK_MS) {
+			int dark = xf16cam_board_cds_is_dark() > 0;
+			cds_elapsed_ms = 0;
+			if (dark != xf16cam_board_get_ir_led_on())
+				xf16cam_board_set_ir_led(dark);
+		}
+		#endif
 
 		if (mode_pressed) {
 			mode_held_ms += XF16CAM_BUTTON_POLL_MS;
