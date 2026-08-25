@@ -35,7 +35,7 @@
 #ifndef NO_PTZ
 #define XF16CAM_CDS_CHANNEL           ADC_CHANNEL_5
 #define XF16CAM_CDS_SAMPLES           (10U)
-#define XF16CAM_CDS_DARK_THRESHOLD    (2000U)
+#define XF16CAM_CDS_DARK_THRESHOLD    (1500U)
 #define XF16CAM_CDS_CHECK_MS          (5000U)
 #endif
 
