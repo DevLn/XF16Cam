@@ -9,6 +9,7 @@
 #include "net/udhcp/usr_dhcpd.h"
 #include "net/wlan/wlan.h"
 
+#include "xf16cam_media.h"
 #include "xf16cam_net.h"
 
 #define XF16CAM_STA_TIMEOUT_MS  (20000U)
@@ -65,9 +66,10 @@ static int xf16cam_net_start_ap(void)
 	}
 
 	dhcp.addr_start = inet_addr(XF16CAM_DHCP_IP);
-	dhcp.addr_end = inet_addr(XF16CAM_DHCP_IP);
+	dhcp.addr_end = htonl(ntohl(dhcp.addr_start) +
+	                     (XF16CAM_MAX_PARALLEL_CLIENTS - 1U));
 	dhcp.lease_time = 60 * 60;
-	dhcp.max_leases = 1;
+	dhcp.max_leases = XF16CAM_MAX_PARALLEL_CLIENTS;
 	dhcp_server_start(&dhcp);
 	g_active_mode = XF16CAM_WIFI_AP;
 	printf("xf16cam Wi-Fi ready: mode=AP ip=%s lease=%s\n",

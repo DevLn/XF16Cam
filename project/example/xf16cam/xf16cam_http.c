@@ -934,7 +934,7 @@ static int xf16cam_http_handle(int fd)
 		else if (xf16cam_config_get()->media_mode != XF16CAM_MEDIA_WEB)
 			xf16cam_http_message(fd, "409 Conflict", "Browser video mode is not active.");
 		else if (xf16cam_mjpeg_start(fd) != 0)
-			xf16cam_http_message(fd, "503 Service Unavailable", "A browser video client is already active.");
+			xf16cam_http_message(fd, "503 Service Unavailable", "Browser video is at the 3-client limit.");
 		else
 			return XF16CAM_HTTP_DETACH_CLIENT;
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/stream.pcmu") == 0) {
@@ -942,7 +942,7 @@ static int xf16cam_http_handle(int fd)
 		    xf16cam_sensor_available())
 			xf16cam_http_message(fd, "409 Conflict", "Browser video mode is not active.");
 		else if (xf16cam_audio_http_start(fd) != 0)
-			xf16cam_http_message(fd, "503 Service Unavailable", "A browser audio client is already active.");
+			xf16cam_http_message(fd, "503 Service Unavailable", "Browser audio is at the 3-client limit.");
 		else
 			return XF16CAM_HTTP_DETACH_CLIENT;
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/scan") == 0) {
@@ -1168,7 +1168,7 @@ int xf16cam_http_start(void)
 	address.sin_port = htons(XF16CAM_HTTP_PORT);
 	address.sin_addr.s_addr = INADDR_ANY;
 	if (bind(server, (struct sockaddr *)&address, sizeof(address)) != 0 ||
-	    listen(server, 2) != 0)
+	    listen(server, XF16CAM_MAX_PARALLEL_CLIENTS) != 0)
 		goto fail_close;
 	if (OS_ThreadCreate(&g_http_thread, "xf16cam-http", xf16cam_http_task,
 	                    (void *)(intptr_t)server, OS_THREAD_PRIO_APP,

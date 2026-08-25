@@ -48,6 +48,7 @@
 #define XF16CAM_RTP_AUDIO_SSRC   (0x58463137UL)
 #define XF16CAM_RTSP_HANDSHAKE_MS (10000U)
 #define XF16CAM_RTSP_IO_TIMEOUT_MS (2000)
+#define XF16CAM_RTSP_CLIENT_STACK (3 * 1024)
 
 _Static_assert(JPEG_SRAM_SIZE >= JPEG_BUFFER_COUNT *
 	       (JPEG_BUFF_SIZE + CAMERA_JPEG_HEADER_LEN + 1023U),
@@ -75,9 +76,15 @@ static OS_Mutex_t g_camera_lock;
 static int g_camera_lock_ready;
 static int g_camera_initialized;
 static uint32_t g_camera_users;
-static OS_Thread_t g_mjpeg_thread;
-static volatile int g_mjpeg_active;
-static volatile int g_rtsp_active;
+typedef struct {
+	OS_Thread_t thread;
+	volatile int active;
+	int fd;
+} XF16CamMediaClient;
+static XF16CamMediaClient g_mjpeg_clients[XF16CAM_MAX_PARALLEL_CLIENTS];
+static XF16CamMediaClient g_rtsp_clients[XF16CAM_MAX_PARALLEL_CLIENTS];
+static volatile uint32_t g_mjpeg_active_count;
+static volatile uint32_t g_rtsp_active_count;
 static XF16CamMediaInfo g_media_info = {
 	.jpeg_capacity = JPEG_BUFF_SIZE,
 };
@@ -489,14 +496,17 @@ static int xf16cam_mjpeg_stream(int fd)
 
 static void xf16cam_mjpeg_task(void *arg)
 {
-	int fd = (int)(intptr_t)arg;
+	uint32_t slot = (uint32_t)(uintptr_t)arg;
+	int fd = g_mjpeg_clients[slot].fd;
 
 	xf16cam_mjpeg_stream(fd);
 	closesocket(fd);
 	xf16cam_camera_release();
-	OS_ThreadSetInvalid(&g_mjpeg_thread);
+	OS_ThreadSetInvalid(&g_mjpeg_clients[slot].thread);
 	__sync_synchronize();
-	g_mjpeg_active = 0;
+	g_mjpeg_clients[slot].active = 0;
+	if (g_mjpeg_active_count > 0)
+		__sync_fetch_and_sub(&g_mjpeg_active_count, 1);
 	OS_ThreadDelete(NULL);
 }
 
@@ -504,22 +514,36 @@ __xip_text
 int xf16cam_mjpeg_start(int fd)
 {
 	int timeout = XF16CAM_RTSP_IO_TIMEOUT_MS;
+	uint32_t slot;
+	int found = 0;
 
 	if (xf16cam_update_active())
 		return -1;
-	if (g_mjpeg_active)
+	for (slot = 0; slot < XF16CAM_MAX_PARALLEL_CLIENTS; ++slot) {
+		if (__sync_bool_compare_and_swap(&g_mjpeg_clients[slot].active, 0, 1)) {
+			found = 1;
+			break;
+		}
+	}
+	if (!found)
 		return -1;
 	if (xf16cam_camera_acquire() != 0)
-		return -1;
+		goto fail_slot;
 	setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-	g_mjpeg_active = 1;
-	if (OS_ThreadCreate(&g_mjpeg_thread, "xf16cam-mjpeg", xf16cam_mjpeg_task,
-	                    (void *)(intptr_t)fd, OS_THREAD_PRIO_APP, 2 * 1024) != OS_OK) {
-		g_mjpeg_active = 0;
+	g_mjpeg_clients[slot].fd = fd;
+	__sync_fetch_and_add(&g_mjpeg_active_count, 1);
+	if (OS_ThreadCreate(&g_mjpeg_clients[slot].thread, "xf16cam-mjpeg", xf16cam_mjpeg_task,
+	                    (void *)(uintptr_t)slot, OS_THREAD_PRIO_APP, 2 * 1024) != OS_OK) {
+		__sync_fetch_and_sub(&g_mjpeg_active_count, 1);
 		xf16cam_camera_release();
-		return -1;
+		goto fail_slot;
 	}
 	return 0;
+
+fail_slot:
+	__sync_synchronize();
+	g_mjpeg_clients[slot].active = 0;
+	return -1;
 }
 
 typedef struct {
@@ -958,11 +982,28 @@ static int xf16cam_rtsp_listener_open(void)
 	addr.sin_port = htons(XF16CAM_RTSP_PORT);
 	addr.sin_addr.s_addr = INADDR_ANY;
 	if (bind(server, (struct sockaddr *)&addr, sizeof(addr)) != 0 ||
-	    listen(server, 1) != 0) {
+	    listen(server, XF16CAM_MAX_PARALLEL_CLIENTS) != 0) {
 		closesocket(server);
 		return -1;
 	}
 	return server;
+}
+
+static void xf16cam_rtsp_client_task(void *arg)
+{
+	char ip[16];
+	uint32_t slot = (uint32_t)(uintptr_t)arg;
+	int fd = g_rtsp_clients[slot].fd;
+
+	snprintf(ip, sizeof(ip), "%s", xf16cam_net_ip());
+	xf16cam_stream_client(fd, ip);
+	closesocket(fd);
+	OS_ThreadSetInvalid(&g_rtsp_clients[slot].thread);
+	__sync_synchronize();
+	g_rtsp_clients[slot].active = 0;
+	if (g_rtsp_active_count > 0)
+		__sync_fetch_and_sub(&g_rtsp_active_count, 1);
+	OS_ThreadDelete(NULL);
 }
 
 static void xf16cam_rtsp_server(int server)
@@ -973,18 +1014,36 @@ static void xf16cam_rtsp_server(int server)
 	printf("xf16cam ready: rtsp://%s:%u/stream\n", ip, XF16CAM_RTSP_PORT);
 	while (1) {
 		int client = accept(server, NULL, NULL);
+		uint32_t slot;
+		int found = 0;
+
 		if (client < 0)
 			continue;
-		g_rtsp_active = 1;
 		if (xf16cam_update_active()) {
 			closesocket(client);
-			g_rtsp_active = 0;
 			continue;
 		}
+		for (slot = 0; slot < XF16CAM_MAX_PARALLEL_CLIENTS; ++slot) {
+			if (__sync_bool_compare_and_swap(&g_rtsp_clients[slot].active, 0, 1)) {
+				found = 1;
+				break;
+			}
+		}
+		if (!found) {
+			closesocket(client);
+			continue;
+		}
+		g_rtsp_clients[slot].fd = client;
+		__sync_fetch_and_add(&g_rtsp_active_count, 1);
 		printf("xf16cam RTSP client connected\n");
-		xf16cam_stream_client(client, ip);
-		closesocket(client);
-		g_rtsp_active = 0;
+		if (OS_ThreadCreate(&g_rtsp_clients[slot].thread, "xf16cam-rtsp-client",
+		                    xf16cam_rtsp_client_task, (void *)(uintptr_t)slot,
+		                    OS_THREAD_PRIO_APP, XF16CAM_RTSP_CLIENT_STACK) != OS_OK) {
+			__sync_fetch_and_sub(&g_rtsp_active_count, 1);
+			__sync_synchronize();
+			g_rtsp_clients[slot].active = 0;
+			closesocket(client);
+		}
 	}
 }
 
@@ -994,7 +1053,8 @@ int xf16cam_media_quiesce_for_update(uint32_t timeout_ms)
 	uint32_t start = OS_TicksToMSecs(OS_GetTicks());
 
 	while (OS_TicksToMSecs(OS_GetTicks()) - start < timeout_ms) {
-		if (!g_mjpeg_active && !g_rtsp_active && xf16cam_audio_update_ready())
+		if (g_mjpeg_active_count == 0 && g_rtsp_active_count == 0 &&
+		    xf16cam_audio_update_ready())
 			return 0;
 		OS_MSleep(10);
 	}

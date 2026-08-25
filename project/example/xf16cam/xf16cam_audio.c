@@ -20,20 +20,26 @@
 #define XF16CAM_AUDIO_WARMUP_PACKETS (105)
 
 typedef struct {
+	OS_Thread_t thread;
+	volatile int active;
+	int fd;
+} XF16CamAudioHttpClient;
+
+typedef struct {
 	uint8_t pcmu[XF16CAM_AUDIO_SAMPLES_PER_PACKET];
 	uint32_t timestamp;
 	volatile uint32_t generation;
 } XF16CamAudioPacket;
 
 static OS_Thread_t g_audio_thread;
-static OS_Thread_t g_audio_http_thread;
 static OS_Mutex_t g_audio_lock;
 static int g_audio_lock_ready;
 static XF16CamAudioPacket g_audio_ring[XF16CAM_AUDIO_RING_PACKETS];
 static volatile uint32_t g_audio_packets;
 static XF16CamAudioInfo g_audio_info;
 static volatile uint32_t g_audio_users;
-static volatile int g_audio_http_active;
+static XF16CamAudioHttpClient g_audio_http_clients[XF16CAM_MAX_PARALLEL_CLIENTS];
+static volatile uint32_t g_audio_http_clients_active;
 static volatile int g_audio_update_quiesced = 1;
 
 static int xf16cam_audio_send_all(int fd, const void *data, uint32_t length)
@@ -172,8 +178,10 @@ int xf16cam_audio_start(void)
 {
 	memset(&g_audio_info, 0, sizeof(g_audio_info));
 	memset(g_audio_ring, 0, sizeof(g_audio_ring));
+	memset(g_audio_http_clients, 0, sizeof(g_audio_http_clients));
 	g_audio_packets = 0;
 	g_audio_users = 0;
+	g_audio_http_clients_active = 0;
 	g_audio_update_quiesced = 1;
 	if (OS_MutexCreate(&g_audio_lock) != OS_OK)
 		return -1;
@@ -217,10 +225,11 @@ static void xf16cam_audio_http_task(void *arg)
 	static const char header[] =
 		"HTTP/1.1 200 OK\r\nContent-Type: audio/basic\r\n"
 		"Cache-Control: no-store\r\nConnection: close\r\n\r\n";
+	uint32_t slot = (uint32_t)(uintptr_t)arg;
 	uint8_t pcmu[XF16CAM_AUDIO_SAMPLES_PER_PACKET];
 	uint32_t cursor = xf16cam_audio_cursor();
 	uint32_t timestamp;
-	int fd = (int)(intptr_t)arg;
+	int fd = g_audio_http_clients[slot].fd;
 
 	if (xf16cam_audio_send_all(fd, header, sizeof(header) - 1) == 0) {
 		printf("xf16cam WEB audio: PCMU/8000 client connected\n");
@@ -238,34 +247,54 @@ static void xf16cam_audio_http_task(void *arg)
 	closesocket(fd);
 	xf16cam_audio_release();
 	printf("xf16cam WEB audio client stopped\n");
-	OS_ThreadSetInvalid(&g_audio_http_thread);
+	OS_ThreadSetInvalid(&g_audio_http_clients[slot].thread);
 	__sync_synchronize();
-	g_audio_http_active = 0;
+	g_audio_http_clients[slot].active = 0;
+	if (g_audio_http_clients_active > 0)
+		__sync_fetch_and_sub(&g_audio_http_clients_active, 1);
 	OS_ThreadDelete(NULL);
 }
 
 int xf16cam_audio_http_start(int fd)
 {
 	int timeout = 2000;
+	uint32_t slot;
+	int found = 0;
 
-	if (xf16cam_update_active() || !g_audio_info.available || g_audio_http_active ||
-	    xf16cam_audio_acquire() != 0)
+	if (xf16cam_update_active() || !g_audio_info.available)
 		return -1;
+	for (slot = 0; slot < XF16CAM_MAX_PARALLEL_CLIENTS; ++slot) {
+		if (__sync_bool_compare_and_swap(&g_audio_http_clients[slot].active, 0, 1)) {
+			found = 1;
+			break;
+		}
+	}
+	if (!found || xf16cam_audio_acquire() != 0)
+		goto fail_slot;
+
 	setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-	g_audio_http_active = 1;
-	if (OS_ThreadCreate(&g_audio_http_thread, "xf16cam-web-audio", xf16cam_audio_http_task,
-	                    (void *)(intptr_t)fd, OS_THREAD_PRIO_APP,
-	                    XF16CAM_AUDIO_HTTP_STACK) != OS_OK) {
-		g_audio_http_active = 0;
+	g_audio_http_clients[slot].fd = fd;
+	__sync_fetch_and_add(&g_audio_http_clients_active, 1);
+	if (OS_ThreadCreate(&g_audio_http_clients[slot].thread, "xf16cam-web-audio",
+	                    xf16cam_audio_http_task, (void *)(uintptr_t)slot,
+	                    OS_THREAD_PRIO_APP, XF16CAM_AUDIO_HTTP_STACK) != OS_OK) {
+		__sync_fetch_and_sub(&g_audio_http_clients_active, 1);
 		xf16cam_audio_release();
-		return -1;
+		goto fail_slot;
 	}
 	return 0;
+
+fail_slot:
+	if (found) {
+		__sync_synchronize();
+		g_audio_http_clients[slot].active = 0;
+	}
+	return -1;
 }
 
 int xf16cam_audio_update_ready(void)
 {
-	return g_audio_update_quiesced && !g_audio_http_active;
+	return g_audio_update_quiesced && g_audio_http_clients_active == 0;
 }
 
 const XF16CamAudioInfo *xf16cam_audio_info(void)
