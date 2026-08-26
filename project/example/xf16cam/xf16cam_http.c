@@ -308,28 +308,21 @@ static void xf16cam_http_page(int fd)
 	                  XF16CAM_VERSION,
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Open AP",
 	                  xf16cam_net_ip(), camera_detail,
-	                  !camera_available ? "Offline" :
-	                  config->media_mode == XF16CAM_MEDIA_WEB ? "Browser MJPEG" : "RTSP");
+	                  !camera_available ? "Offline" : "Browser MJPEG + RTSP");
 	xf16cam_http_send_all(fd, dynamic, length);
-	if (config->media_mode == XF16CAM_MEDIA_WEB) {
-		if (camera_available)
-			XF16CAM_HTTP_SEND_LITERAL(fd,
-			                  "<img id=video alt='Live camera'></div>");
-		else
-			XF16CAM_HTTP_SEND_LITERAL(fd,
-				                  "<div class=empty><b>Camera unavailable</b><p>Connect a sensor and reboot.</p></div></div>");
-	} else if (camera_available) {
+	if (camera_available) {
 		length = snprintf(dynamic, sizeof(dynamic),
+		                  "<img id=video alt='Live camera'>"
 		                  "<div class=rtsp><a href='rtsp://%s:8554/stream'>rtsp://%s:8554/stream</a>"
 		                  "<br><small>Open this address in VLC or another RTSP player.</small></div></div>",
 		                  xf16cam_net_ip(), xf16cam_net_ip());
 		xf16cam_http_send_all(fd, dynamic, length);
 	} else {
 		XF16CAM_HTTP_SEND_LITERAL(fd,
-		                  "<div class=empty><b>Camera unavailable</b><p>Connect a sensor to enable RTSP.</p></div></div>");
+		                  "<div class=empty><b>Camera unavailable</b><p>Connect a sensor and reboot.</p></div></div>");
 	}
 	XF16CAM_HTTP_SEND_LITERAL(fd,"<div class=controls><div>");
-	if ((config->media_mode == XF16CAM_MEDIA_WEB || !camera_available) && audio->available) {
+	if (audio->available) {
 		XF16CAM_HTTP_SEND_LITERAL(fd,
 		                  "<button type=button id=listen onclick=toggleAudio()>Listen</button> "
 		                  "<span id=audioState aria-live=polite>Audio stopped</span>"
@@ -347,11 +340,7 @@ static void xf16cam_http_page(int fd)
 		                  "catch(e){if(a===c){a=r=null;b.textContent='Listen';s.textContent='Audio connection failed';"
 		                  "try{if(c)await c.close()}catch(e){}}}}</script>");
 	}
-	XF16CAM_HTTP_SEND_LITERAL(fd,
-						"<form method=post action=/api/media>"
-						"<button name=mode value=web onclick='videoStop(1)'>Browser video</button> "
-						"<button name=mode value=rtsp onclick='videoStop(1)'>RTSP</button></form>"
-						"<small>Changing mode reboots.</small></div><div>");
+	XF16CAM_HTTP_SEND_LITERAL(fd, "</div><div>");
 	#ifndef NO_PTZ
 	//Add LED control button
 	XF16CAM_HTTP_SEND_LITERAL(fd,
@@ -412,8 +401,7 @@ static void xf16cam_http_page(int fd)
 	                  "</span><b>JPEG output</b><span>%s</span><b>Stream mode</b><span>%s</span>"
 	                  "<b>JPEG body buffer</b><span>%lu bytes</span><b>Frames captured</b><span>%lu</span>"
 	                  "<b>Largest JPEG body</b><span>%lu bytes</span><b>Capture errors</b><span>%lu</span></div>",
-	                  camera_output, !camera_available ? "Disabled (no sensor)" :
-	                  config->media_mode == XF16CAM_MEDIA_WEB ? "Browser MJPEG" : "RTSP",
+	                  camera_output, !camera_available ? "Disabled (no sensor)" : "Browser MJPEG + RTSP",
 	                  (unsigned long)media->jpeg_capacity, (unsigned long)media->frames,
 	                  (unsigned long)media->largest_jpeg,
 	                  (unsigned long)media->capture_errors);
@@ -931,17 +919,12 @@ static int xf16cam_http_handle(int fd)
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/stream.mjpeg") == 0) {
 		if (!xf16cam_sensor_available())
 			xf16cam_http_message(fd, "503 Service Unavailable", "No supported camera sensor is available.");
-		else if (xf16cam_config_get()->media_mode != XF16CAM_MEDIA_WEB)
-			xf16cam_http_message(fd, "409 Conflict", "Browser video mode is not active.");
 		else if (xf16cam_mjpeg_start(fd) != 0)
 			xf16cam_http_message(fd, "503 Service Unavailable", "Browser video is at the 3-client limit.");
 		else
 			return XF16CAM_HTTP_DETACH_CLIENT;
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/stream.pcmu") == 0) {
-		if (xf16cam_config_get()->media_mode != XF16CAM_MEDIA_WEB &&
-		    xf16cam_sensor_available())
-			xf16cam_http_message(fd, "409 Conflict", "Browser video mode is not active.");
-		else if (xf16cam_audio_http_start(fd) != 0)
+		if (xf16cam_audio_http_start(fd) != 0)
 			xf16cam_http_message(fd, "503 Service Unavailable", "Browser audio is at the 3-client limit.");
 		else
 			return XF16CAM_HTTP_DETACH_CLIENT;
@@ -1035,21 +1018,7 @@ static int xf16cam_http_handle(int fd)
 			return XF16CAM_HTTP_KEEP_RUNNING;
 		}
 		#endif
-	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/media") == 0) {
-			if (xf16cam_form_value(body, "mode", mode, sizeof(mode)) != 0 ||
-				xf16cam_config_save_media(strcmp(mode, "web") == 0 ? XF16CAM_MEDIA_WEB :
-										strcmp(mode, "rtsp") == 0 ? XF16CAM_MEDIA_RTSP : 0) != 0) {
-				xf16cam_http_message(fd, "400 Bad Request", "Invalid camera mode.");
-				return XF16CAM_HTTP_KEEP_RUNNING;
-			}
-			if (xf16cam_update_begin() != 0) {
-				xf16cam_http_message(fd, "409 Conflict",
-									"Camera mode was saved, but reboot was deferred by another update.");
-				return XF16CAM_HTTP_KEEP_RUNNING;
-			}
-			xf16cam_http_message(fd, "200 OK", "Camera mode saved. Rebooting...");
-			return XF16CAM_HTTP_COLD_REBOOT;
-		} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/resolution") == 0) {
+	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/resolution") == 0) {
 		XF16CamResolution resolution;
 
 		if (xf16cam_form_value(body, "resolution", mode, sizeof(mode)) != 0 ||
