@@ -6,7 +6,9 @@ if /I not "%BUILD_VARIANT%"=="ptz" if /I not "%BUILD_VARIANT%"=="no_ptz" (
 	exit /b 1
 )
 
-del /q dist\* 2>nul
+
+rd /S /Q dist
+
 docker build --build-arg BUILD_VARIANT=%BUILD_VARIANT% -t xf16cam-build . && ^
 docker create --name xf16cam-extract xf16cam-build && ^
 docker cp xf16cam-extract:/workspace/dist ./dist && ^

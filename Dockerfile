@@ -25,7 +25,7 @@ RUN mkdir -p /opt/arm-gnu-toolchain \
 ENV PATH="/opt/arm-gnu-toolchain/bin:${PATH}"
 
 WORKDIR /workspace
-COPY . .
+COPY --exclude=./dist --exclude=./.git . .
 
 # Test RTSP request parser
 RUN cc -std=c11 -Wall -Wextra -Werror \
