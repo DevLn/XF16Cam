@@ -510,22 +510,25 @@ static void xf16cam_mjpeg_task(void *arg)
 	OS_ThreadDelete(NULL);
 }
 
+int xf16cam_find_mjpeg_slot(void)
+{
+	for (int slot = 0; slot < XF16CAM_MAX_PARALLEL_CLIENTS; ++slot) {
+		if (__sync_bool_compare_and_swap(&g_mjpeg_clients[slot].active, 0, 1)) {
+			return slot;
+		}
+	}
+	return -1;
+}
+
 __xip_text
 int xf16cam_mjpeg_start(int fd)
 {
 	int timeout = XF16CAM_RTSP_IO_TIMEOUT_MS;
-	uint32_t slot;
-	int found = 0;
 
 	if (xf16cam_update_active())
 		return -1;
-	for (slot = 0; slot < XF16CAM_MAX_PARALLEL_CLIENTS; ++slot) {
-		if (__sync_bool_compare_and_swap(&g_mjpeg_clients[slot].active, 0, 1)) {
-			found = 1;
-			break;
-		}
-	}
-	if (!found)
+	int slot = xf16cam_find_mjpeg_slot();
+	if (slot < 0)
 		return -1;
 	if (xf16cam_camera_acquire() != 0)
 		goto fail_slot;
@@ -1006,6 +1009,16 @@ static void xf16cam_rtsp_client_task(void *arg)
 	OS_ThreadDelete(NULL);
 }
 
+static int xf16cam_find_rtsp_slot(void)
+{
+	for (int slot = 0; slot < XF16CAM_MAX_PARALLEL_CLIENTS; ++slot) {
+		if (__sync_bool_compare_and_swap(&g_rtsp_clients[slot].active, 0, 1)) {
+			return slot;
+		}
+	}
+	return -1;
+}
+
 static void xf16cam_rtsp_server(int server)
 {
 	char ip[16];
@@ -1014,8 +1027,6 @@ static void xf16cam_rtsp_server(int server)
 	printf("xf16cam ready: rtsp://%s:%u/stream\n", ip, XF16CAM_RTSP_PORT);
 	while (1) {
 		int client = accept(server, NULL, NULL);
-		uint32_t slot;
-		int found = 0;
 
 		if (client < 0)
 			continue;
@@ -1023,13 +1034,8 @@ static void xf16cam_rtsp_server(int server)
 			closesocket(client);
 			continue;
 		}
-		for (slot = 0; slot < XF16CAM_MAX_PARALLEL_CLIENTS; ++slot) {
-			if (__sync_bool_compare_and_swap(&g_rtsp_clients[slot].active, 0, 1)) {
-				found = 1;
-				break;
-			}
-		}
-		if (!found) {
+		int slot = xf16cam_find_rtsp_slot();
+		if (slot < 0) {
 			closesocket(client);
 			continue;
 		}
