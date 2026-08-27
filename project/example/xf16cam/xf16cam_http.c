@@ -1059,6 +1059,10 @@ static int xf16cam_http_handle(int fd)
 		else
 			xf16cam_http_message(fd, "200 OK", "SD card formatted as FAT32.");
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/hibernate") == 0) {
+		#ifndef NO_PTZ
+		xf16cam_http_message(fd, "501 Not Implemented", "Hibernate is not supported on this board.");
+		return XF16CAM_HTTP_KEEP_RUNNING;
+		#else
 		if (xf16cam_update_begin() != 0) {
 			xf16cam_http_message(fd, "409 Conflict", "Device is busy.");
 			return XF16CAM_HTTP_KEEP_RUNNING;
@@ -1071,6 +1075,7 @@ static int xf16cam_http_handle(int fd)
 		}
 		xf16cam_http_message(fd, "200 OK", "Hibernating; press PA20 to wake.");
 		return XF16CAM_HTTP_HIBERNATE;
+		#endif
 	} else {
 		xf16cam_http_message(fd, "404 Not Found", "Page not found.");
 	}
