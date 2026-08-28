@@ -131,6 +131,13 @@ static void xf16cam_board_task(void *arg)
 		#endif
 		int reset_pressed = xf16cam_board_reset_button_pressed();
 
+		// Workaround if camera freezing: reboot after 2 hours uptime
+		// if (OS_TicksToMSecs(OS_GetTicks()) > 2 * 60 * 60 * 1000) {
+		// 	printf("xf16cam board: rebooting after 2 hours uptime\n");
+		// 	xf16cam_board_reboot();
+		// }
+
+
 		if (g_board_sleeping) {
 			if (led) {
 				led = 0;

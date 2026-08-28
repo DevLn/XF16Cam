@@ -76,6 +76,10 @@ static OS_Mutex_t g_camera_lock;
 static int g_camera_lock_ready;
 static int g_camera_initialized;
 static uint32_t g_camera_users;
+/* The capture arena holds a single JPEG buffer; serialize capture-through-send
+ * so a second client can't overwrite it while another client is still reading it. */
+static OS_Mutex_t g_capture_lock;
+static int g_capture_lock_ready;
 typedef struct {
 	OS_Thread_t thread;
 	volatile int active;
@@ -243,6 +247,9 @@ static int xf16cam_camera_manager_init(void)
 	if (OS_MutexCreate(&g_camera_lock) != OS_OK)
 		return -1;
 	g_camera_lock_ready = 1;
+	if (OS_MutexCreate(&g_capture_lock) != OS_OK)
+		return -1;
+	g_capture_lock_ready = 1;
 	if (xf16_board_camera_power_prepare() != 0)
 		return -1;
 	if (camera_init() != 0) {
@@ -472,22 +479,30 @@ static int xf16cam_mjpeg_stream(int fd)
 		uint32_t eoi_len;
 		int capture;
 		int length;
+		int failed;
 
-		capture = xf16cam_capture_jpeg(&info, &jpeg, &jpeg_len);
-		if (capture < 0)
+		if (!g_capture_lock_ready ||
+		    OS_MutexLock(&g_capture_lock, OS_WAIT_FOREVER) != OS_OK)
 			break;
-		if (capture > 0)
+		capture = xf16cam_capture_jpeg(&info, &jpeg, &jpeg_len);
+		if (capture != 0) {
+			OS_MutexUnlock(&g_capture_lock);
+			if (capture < 0)
+				break;
 			continue;
+		}
 		eoi_len = jpeg_len >= 2 && jpeg[jpeg_len - 2] == 0xff &&
 		          jpeg[jpeg_len - 1] == 0xd9 ? 0 : sizeof(eoi);
 		length = snprintf(part, sizeof(part),
 		                  "--xf16frame\r\nContent-Type: image/jpeg\r\nContent-Length: %lu\r\n\r\n",
 		                  (unsigned long)(jpeg_len + eoi_len));
-		if (length <= 0 || length >= (int)sizeof(part) ||
-		    xf16cam_send_all(fd, part, length) != 0 ||
-		    xf16cam_send_all(fd, jpeg, jpeg_len) != 0 ||
-		    (eoi_len != 0 && xf16cam_send_all(fd, eoi, eoi_len) != 0) ||
-		    xf16cam_send_all(fd, "\r\n", 2) != 0)
+		failed = length <= 0 || length >= (int)sizeof(part) ||
+		         xf16cam_send_all(fd, part, length) != 0 ||
+		         xf16cam_send_all(fd, jpeg, jpeg_len) != 0 ||
+		         (eoi_len != 0 && xf16cam_send_all(fd, eoi, eoi_len) != 0) ||
+		         xf16cam_send_all(fd, "\r\n", 2) != 0;
+		OS_MutexUnlock(&g_capture_lock);
+		if (failed)
 			break;
 	}
 	printf("xf16cam WEB client stopped\n");
@@ -936,23 +951,34 @@ static int xf16cam_stream_client(int fd, const char *ip)
 				goto stopped;
 		}
 
-		capture = xf16cam_capture_jpeg(&info, &jpeg, &jpeg_len);
-		if (capture < 0)
+		if (!g_capture_lock_ready ||
+		    OS_MutexLock(&g_capture_lock, OS_WAIT_FOREVER) != OS_OK)
 			break;
-		if (capture > 0)
+		capture = xf16cam_capture_jpeg(&info, &jpeg, &jpeg_len);
+		if (capture != 0) {
+			OS_MutexUnlock(&g_capture_lock);
+			if (capture < 0)
+				break;
 			continue;
+		}
 		if (xf16cam_parse_jpeg(jpeg, jpeg_len, &jpg) != 0) {
+			OS_MutexUnlock(&g_capture_lock);
 			printf("xf16cam invalid jpeg: index=%u len=%lu\n",
 			       info.buff_index, (unsigned long)jpeg_len);
 			continue;
 		}
 		if (session.audio_setup &&
 		    xf16cam_send_rtp_audio(fd, &audio_sequence, &audio_cursor,
-		                             session.audio_channel) != 0)
+		                             session.audio_channel) != 0) {
+			OS_MutexUnlock(&g_capture_lock);
 			break;
+		}
 		if (xf16cam_send_rtp_jpeg(fd, &jpg, &sequence, timestamp,
-		                            session.video_channel) != 0)
+		                            session.video_channel) != 0) {
+			OS_MutexUnlock(&g_capture_lock);
 			break;
+		}
+		OS_MutexUnlock(&g_capture_lock);
 		timestamp = OS_TicksToMSecs(OS_GetTicks()) * 90U;
 		if (session.audio_setup &&
 		    xf16cam_send_rtp_audio(fd, &audio_sequence, &audio_cursor,
