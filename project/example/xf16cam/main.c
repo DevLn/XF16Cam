@@ -551,7 +551,7 @@ int xf16cam_mjpeg_start(int fd)
 	g_mjpeg_clients[slot].fd = fd;
 	__sync_fetch_and_add(&g_mjpeg_active_count, 1);
 	if (OS_ThreadCreate(&g_mjpeg_clients[slot].thread, "xf16cam-mjpeg", xf16cam_mjpeg_task,
-	                    (void *)(uintptr_t)slot, OS_THREAD_PRIO_APP, 2 * 1024) != OS_OK) {
+	                    (void *)(uintptr_t)slot, OS_THREAD_PRIO_APP, 3 * 1024) != OS_OK) {
 		__sync_fetch_and_sub(&g_mjpeg_active_count, 1);
 		xf16cam_camera_release();
 		goto fail_slot;
