@@ -29,6 +29,7 @@
 #endif
 
 #define XF16CAM_BUTTON_POLL_MS       (50)
+#define XF16CAM_BUTTON_DEBOUNCE_MS   (100)
 #define XF16CAM_RESET_HOLD_MS        (3000)
 #define XF16CAM_BOARD_STACK_SIZE     (1024)
 #ifndef NO_PTZ
@@ -114,20 +115,25 @@ static void xf16cam_board_reboot(void)
 
 static void xf16cam_board_task(void *arg)
 {
+	unsigned int mode_held_ms = 0;
 	unsigned int reset_held_ms = 0;
 	unsigned int blink_ms = 0;
 	unsigned int cds_elapsed_ms = 0;
+	int mode_handled = 0;
 	int reset_handled = 0;
 	int led = 0;
 
 	(void)arg;
 	while (1) {
-		#ifndef NO_PTZ
+		#ifdef NO_PTZ
+		int mode_pressed = xf16cam_board_mode_button_pressed();
+		#else
 		if(g_ptz_ready && g_last_ptz_time != 0 &&
 			OS_TicksToMSecs(OS_GetTicks()) - g_last_ptz_time > PTZ_IDLE_TIMEOUT_MS) {
 			g_last_ptz_time = 0;
 			xf16cam_ptz_power_down();
 		}
+		int mode_pressed = 0;
 		#endif
 		int reset_pressed = xf16cam_board_reset_button_pressed();
 
@@ -165,6 +171,7 @@ static void xf16cam_board_task(void *arg)
 			#endif
 		}
 		if (!g_board_ready) {
+			mode_held_ms = 0;
 			reset_held_ms = 0;
 			OS_MSleep(XF16CAM_BUTTON_POLL_MS);
 			continue;
@@ -178,6 +185,21 @@ static void xf16cam_board_task(void *arg)
 				xf16cam_board_set_ir_led(dark);
 		}
 		#endif
+
+		if (mode_pressed) {
+			mode_held_ms += XF16CAM_BUTTON_POLL_MS;
+		} else {
+			if (!mode_handled && mode_held_ms >= XF16CAM_BUTTON_DEBOUNCE_MS) {
+				XF16CamMediaMode next = xf16cam_config_get()->media_mode == XF16CAM_MEDIA_WEB ?
+				                          XF16CAM_MEDIA_RTSP : XF16CAM_MEDIA_WEB;
+				printf("xf16cam PA15: switching media mode to %s\n",
+				       next == XF16CAM_MEDIA_WEB ? "WEB" : "RTSP");
+				if (xf16cam_config_save_media(next) == 0)
+					xf16cam_board_reboot();
+			}
+			mode_held_ms = 0;
+			mode_handled = 0;
+		}
 
 		if (reset_pressed) {
 			reset_held_ms += XF16CAM_BUTTON_POLL_MS;

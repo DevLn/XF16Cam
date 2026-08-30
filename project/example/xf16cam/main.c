@@ -1079,22 +1079,6 @@ static void xf16cam_rtsp_server(int server)
 	}
 }
 
-static OS_Thread_t g_rtsp_server_thread;
-
-static void xf16cam_rtsp_server_task(void *arg)
-{
-	xf16cam_rtsp_server((int)(intptr_t)arg);
-	OS_ThreadDelete(NULL);
-}
-
-/* RTSP runs alongside browser MJPEG/audio regardless of the persisted default
- * media_mode, so clients on either transport can connect at the same time. */
-static int xf16cam_rtsp_start(int server)
-{
-	return OS_ThreadCreate(&g_rtsp_server_thread, "xf16cam-rtsp", xf16cam_rtsp_server_task,
-	                       (void *)(intptr_t)server, OS_THREAD_PRIO_APP, 2 * 1024);
-}
-
 __xip_text
 int xf16cam_media_quiesce_for_update(uint32_t timeout_ms)
 {
@@ -1144,9 +1128,7 @@ int main(void)
 			xf16cam_camera_release_boot_probe();
 		xf16cam_idle();
 	}
-	/* RTSP and browser MJPEG/audio are independent transports; both start
-	 * whenever a camera is present so clients can pick either concurrently. */
-	if (camera_ready) {
+	if (camera_ready && xf16cam_config_get()->media_mode == XF16CAM_MEDIA_RTSP) {
 		rtsp_server = xf16cam_rtsp_listener_open();
 		if (rtsp_server < 0)
 			printf("xf16cam RTSP listener failed; management remains available\n");
@@ -1163,14 +1145,17 @@ int main(void)
 		xf16cam_board_set_ready();
 	if (camera_ready)
 		xf16cam_camera_release_boot_probe();
-	if (rtsp_server >= 0 && xf16cam_rtsp_start(rtsp_server) != 0) {
-		printf("xf16cam RTSP server thread failed; management remains available\n");
-		closesocket(rtsp_server);
-	}
-	if (camera_ready)
+	if (rtsp_server < 0 && camera_ready &&
+	    xf16cam_config_get()->media_mode == XF16CAM_MEDIA_RTSP)
+		xf16cam_idle();
+	if (camera_ready && xf16cam_config_get()->media_mode == XF16CAM_MEDIA_RTSP) {
+		xf16cam_rtsp_server(rtsp_server);
+	} else if (camera_ready) {
 		printf("xf16cam browser video ready: http://%s/stream.mjpeg\n", xf16cam_net_ip());
-	else
+		xf16cam_idle();
+	} else {
 		printf("xf16cam management ready without camera: http://%s/\n", xf16cam_net_ip());
-	xf16cam_idle();
+		xf16cam_idle();
+	}
 	return 0;
 }
