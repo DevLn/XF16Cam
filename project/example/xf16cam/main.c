@@ -89,6 +89,13 @@ static XF16CamMediaClient g_mjpeg_clients[XF16CAM_MAX_PARALLEL_CLIENTS];
 static XF16CamMediaClient g_rtsp_clients[XF16CAM_MAX_PARALLEL_CLIENTS];
 static volatile uint32_t g_mjpeg_active_count;
 static volatile uint32_t g_rtsp_active_count;
+
+__xip_text
+uint32_t xf16cam_media_active_clients(void)
+{
+	return g_mjpeg_active_count + g_rtsp_active_count;
+}
+
 static XF16CamMediaInfo g_media_info = {
 	.jpeg_capacity = JPEG_BUFF_SIZE,
 };
@@ -450,6 +457,7 @@ static int xf16cam_capture_jpeg(CAMERA_JpegBuffInfo *info, uint8_t **jpeg,
 	*jpeg = mem_mgmt.jpeg_buf[info->buff_index].addr - CAMERA_JPEG_HEADER_LEN;
 	*jpeg_len = info->size + CAMERA_JPEG_HEADER_LEN;
 	++g_media_info.frames;
+	g_media_info.last_frame_ms = OS_TicksToMSecs(OS_GetTicks());
 	if (info->size > g_media_info.largest_jpeg)
 		g_media_info.largest_jpeg = info->size;
 	return 0;

@@ -10,6 +10,7 @@
 
 #include "xf16cam_board.h"
 #include "xf16cam_config.h"
+#include "xf16cam_media.h"
 #include "xf16cam_storage.h"
 #include "xf16cam_sensor.h"
 #include "xf16cam_ptz.h"
@@ -32,6 +33,7 @@
 #define XF16CAM_BUTTON_DEBOUNCE_MS   (100)
 #define XF16CAM_RESET_HOLD_MS        (3000)
 #define XF16CAM_BOARD_STACK_SIZE     (1024)
+#define XF16CAM_CAPTURE_STALL_MS     (30U * 1000U)
 #ifndef NO_PTZ
 #define XF16CAM_CDS_CHANNEL           ADC_CHANNEL_5
 #define XF16CAM_CDS_SAMPLES           (10U)
@@ -137,12 +139,21 @@ static void xf16cam_board_task(void *arg)
 		#endif
 		int reset_pressed = xf16cam_board_reset_button_pressed();
 
-		// Workaround if camera freezing: reboot after 2 hours uptime
-		// if (OS_TicksToMSecs(OS_GetTicks()) > 2 * 60 * 60 * 1000) {
-		// 	printf("xf16cam board: rebooting after 2 hours uptime\n");
-		// 	xf16cam_board_reboot();
-		// }
+		// Recover from a genuinely stalled capture pipeline instead of blindly
+		// rebooting on a timer: only fire if clients are connected but no frame
+		// has been produced for a long time.
+		if (xf16cam_media_active_clients() > 0) {
+			uint32_t now = OS_TicksToMSecs(OS_GetTicks());
+			uint32_t last = xf16cam_media_info()->last_frame_ms;
 
+			if (last == 0)
+				last = now;
+			if (now - last >= XF16CAM_CAPTURE_STALL_MS) {
+				printf("xf16cam board: no camera frames for %lus with clients connected; rebooting\n",
+				       (unsigned long)((now - last) / 1000U));
+				xf16cam_board_reboot();
+			}
+		}
 
 		if (g_board_sleeping) {
 			if (led) {
@@ -160,16 +171,8 @@ static void xf16cam_board_task(void *arg)
 				HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN,
 				                  led ? GPIO_PIN_HIGH : GPIO_PIN_LOW);
 			}
-		} else if (!led) {
-			led = 1;
-			#ifdef NO_PTZ
-			// non-PTZ version: LED is status LED, so turn it on when ready
-			HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, GPIO_PIN_HIGH);
-			#else
-			// PTZ version: LED is luming LED, so turn it off when ready
-			HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, GPIO_PIN_LOW);
-			#endif
 		}
+
 		if (!g_board_ready) {
 			mode_held_ms = 0;
 			reset_held_ms = 0;
@@ -177,12 +180,23 @@ static void xf16cam_board_task(void *arg)
 			continue;
 		}
 		#ifndef NO_PTZ
+		if (led) {
+			led = 0;
+			// PTZ version: LED is luming LED, so turn it off when ready
+			HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, GPIO_PIN_LOW);
+		}
 		cds_elapsed_ms += XF16CAM_BUTTON_POLL_MS;
 		if (cds_elapsed_ms >= XF16CAM_CDS_CHECK_MS) {
 			int dark = xf16cam_board_cds_is_dark() > 0;
 			cds_elapsed_ms = 0;
 			if (dark != xf16cam_board_get_ir_led_on())
 				xf16cam_board_set_ir_led(dark);
+		}
+		#else
+		if (!led) {
+			led = 1;
+			// non-PTZ version: LED is status LED, so turn it on when ready
+			HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN, GPIO_PIN_HIGH);
 		}
 		#endif
 
