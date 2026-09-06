@@ -32,7 +32,7 @@
 #define XF16CAM_BUTTON_POLL_MS       (50)
 #define XF16CAM_BUTTON_DEBOUNCE_MS   (100)
 #define XF16CAM_RESET_HOLD_MS        (3000)
-#define XF16CAM_BOARD_STACK_SIZE     (1024)
+#define XF16CAM_BOARD_STACK_SIZE     (2*1024)
 #define XF16CAM_CAPTURE_STALL_MS     (30U * 1000U)
 #ifndef NO_PTZ
 #define XF16CAM_CDS_CHANNEL           ADC_CHANNEL_5
@@ -63,6 +63,7 @@ int xf16cam_board_reset_button_pressed(void)
 }
 
 #ifndef NO_PTZ
+__xip_text
 static int xf16cam_board_cds_is_dark(void)
 {
 	ADC_InitParam param;
@@ -139,9 +140,13 @@ static void xf16cam_board_task(void *arg)
 		#endif
 		int reset_pressed = xf16cam_board_reset_button_pressed();
 
-		// Recover from a genuinely stalled capture pipeline instead of blindly
-		// rebooting on a timer: only fire if clients are connected but no frame
-		// has been produced for a long time.
+		//Reboot after 2 hours uptime to prevent driver/hardware lockup
+		// if (OS_TicksToMSecs(OS_GetTicks()) > 2U * 60U * 60U * 1000U) {
+		// 	printf("xf16cam board: rebooting after 6 hours uptime\n");
+		// 	xf16cam_board_reboot();
+		// }
+
+		// Fallback recovery if capture stalls before the 2-hour mark
 		if (xf16cam_media_active_clients() > 0) {
 			uint32_t now = OS_TicksToMSecs(OS_GetTicks());
 			uint32_t last = xf16cam_media_info()->last_frame_ms;
@@ -297,6 +302,7 @@ void xf16cam_board_prepare_sleep(void)
 	#endif
 }
 
+__xip_text
 void xf16cam_board_set_led(int on)
 {
 	HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN,
@@ -312,6 +318,7 @@ int xf16cam_board_get_led_on(void)
 #endif
 
 //IR LED control functions for PTZ version
+__xip_text
 void xf16cam_board_set_ir_led(int on)
 {
 	#ifdef XF16CAM_IR_LED_PIN
@@ -321,6 +328,7 @@ void xf16cam_board_set_ir_led(int on)
 	#endif
 }
 
+__xip_text
 int xf16cam_board_get_ir_led_on(void)
 {
 	#ifdef XF16CAM_IR_LED_PIN

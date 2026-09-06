@@ -44,6 +44,7 @@ static const uint8_t g_ptz_halfstep[8] = {
 static unsigned int g_horizontal_step;
 static unsigned int g_vertical_step;
 
+__xip_text
 void xf16cam_ptz_init(void)
 {
 	unsigned int pin_index;
@@ -69,6 +70,7 @@ void xf16cam_ptz_init(void)
 
 //The stepper motors need to be powered down when the camera is going to sleep,
 //otherwise they will draw current, will be hot and drain the battery.
+__xip_text
 void xf16cam_ptz_power_down(void)
 {
 	unsigned int pin_index;
@@ -84,6 +86,7 @@ void xf16cam_ptz_power_down(void)
     printf("xf16cam PTZ: powered down\n");
 }
 
+__xip_text
 static void ptz_write_phase(const GPIO_Pin *pins, unsigned int phase)
 {
 	unsigned int bit;
@@ -94,6 +97,7 @@ static void ptz_write_phase(const GPIO_Pin *pins, unsigned int phase)
 		                  GPIO_PIN_HIGH : GPIO_PIN_LOW);
 }
 
+__xip_text
 static void ptz_move(const GPIO_Pin *pins, unsigned int *step,
 			    unsigned int steps, int direction)
 {
@@ -114,26 +118,31 @@ static void ptz_move(const GPIO_Pin *pins, unsigned int *step,
 	printf("xf16cam PTZ: move complete\n");
 }
 
+__xip_text
 void ptz_move_left(void)
 {
 	ptz_move(g_horizontal_motor_pins, &g_horizontal_step, HORIZONTAL_STEPS, -1);
 }
 
+__xip_text
 void ptz_move_right(void)
 {
 	ptz_move(g_horizontal_motor_pins, &g_horizontal_step, HORIZONTAL_STEPS, 1);
 }
 
+__xip_text
 void ptz_move_up(void)
 {
 	ptz_move(g_vertical_motor_pins, &g_vertical_step, VERTICAL_STEPS, 1);
 }
 
+__xip_text
 void ptz_move_down(void)
 {
 	ptz_move(g_vertical_motor_pins, &g_vertical_step, VERTICAL_STEPS, -1);
 }
 
+__xip_text
 void ptz_move_home(void)
 {
 	if (!g_ptz_ready) {
