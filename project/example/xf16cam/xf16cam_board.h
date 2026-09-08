@@ -17,5 +17,4 @@ int xf16cam_board_get_led_on(void);
 
 int xf16cam_board_reset_button_pressed(void);
 uint32_t xf16cam_board_stack_min_free(void);
-
 #endif
