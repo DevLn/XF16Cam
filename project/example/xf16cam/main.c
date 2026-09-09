@@ -33,6 +33,7 @@
 #include "xf16cam_sensor.h"
 #include "xf16cam_storage.h"
 #include "xf16cam_version.h"
+#include "xf16cam_xip.h"
 
 #define JPEG_ONLINE_EN           (1)
 #define JPEG_BUFFER_COUNT        (1)
@@ -501,9 +502,9 @@ static int xf16cam_mjpeg_stream(int fd)
 		}
 		eoi_len = jpeg_len >= 2 && jpeg[jpeg_len - 2] == 0xff &&
 		          jpeg[jpeg_len - 1] == 0xd9 ? 0 : sizeof(eoi);
-		length = snprintf(part, sizeof(part),
-		                  "--xf16frame\r\nContent-Type: image/jpeg\r\nContent-Length: %lu\r\n\r\n",
-		                  (unsigned long)(jpeg_len + eoi_len));
+		length = XF16CAM_XIP_FORMAT(part, sizeof(part),
+		                            "--xf16frame\r\nContent-Type: image/jpeg\r\nContent-Length: %lu\r\n\r\n",
+		                            (unsigned long)(jpeg_len + eoi_len));
 		failed = length <= 0 || length >= (int)sizeof(part) ||
 		         xf16cam_send_all(fd, part, length) != 0 ||
 		         xf16cam_send_all(fd, jpeg, jpeg_len) != 0 ||
@@ -761,24 +762,24 @@ static int xf16cam_rtsp_reply(int fd, const char *request, const char *ip,
 	int n;
 
 	if (!strncmp(request, "OPTIONS ", 8)) {
-		n = snprintf(response, sizeof(response),
-			     "RTSP/1.0 200 OK\r\nCSeq: %d\r\nPublic: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER\r\n\r\n",
-			     cseq);
+		n = XF16CAM_XIP_FORMAT(response, sizeof(response),
+			               "RTSP/1.0 200 OK\r\nCSeq: %d\r\nPublic: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER\r\n\r\n",
+			               cseq);
 	} else if (!strncmp(request, "DESCRIBE ", 9)) {
-		int sdp_len = snprintf(sdp, sizeof(sdp),
+		int sdp_len = XF16CAM_XIP_FORMAT(sdp, sizeof(sdp),
 			"v=0\r\no=- 0 0 IN IP4 %s\r\ns=XF16 %s\r\nc=IN IP4 %s\r\nt=0 0\r\n"
 			"m=video 0 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=control:track1\r\n"
 			"%s",
 			ip, xf16cam_sensor_name(), ip,
 			session->audio_available ?
 			"m=audio 0 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000/1\r\na=control:track2\r\n" : "");
-		n = snprintf(response, sizeof(response),
-			     "RTSP/1.0 200 OK\r\nCSeq: %d\r\nContent-Base: rtsp://%s:%u/stream/\r\n"
-			     "Content-Type: application/sdp\r\nContent-Length: %d\r\n\r\n%s",
-			     cseq, ip, XF16CAM_RTSP_PORT, sdp_len, sdp);
+		n = XF16CAM_XIP_FORMAT(response, sizeof(response),
+			               "RTSP/1.0 200 OK\r\nCSeq: %d\r\nContent-Base: rtsp://%s:%u/stream/\r\n"
+			               "Content-Type: application/sdp\r\nContent-Length: %d\r\n\r\n%s",
+			               cseq, ip, XF16CAM_RTSP_PORT, sdp_len, sdp);
 	} else if (!strncmp(request, "SETUP ", 6) && !xf16cam_rtsp_tcp_transport(request)) {
-		n = snprintf(response, sizeof(response),
-		             "RTSP/1.0 461 Unsupported Transport\r\nCSeq: %d\r\n\r\n", cseq);
+		n = XF16CAM_XIP_FORMAT(response, sizeof(response),
+		                       "RTSP/1.0 461 Unsupported Transport\r\nCSeq: %d\r\n\r\n", cseq);
 	} else if (!strncmp(request, "SETUP ", 6)) {
 		int video = strstr(request, "track1") != NULL;
 		int audio = strstr(request, "track2") != NULL;
@@ -790,13 +791,13 @@ static int xf16cam_rtsp_reply(int fd, const char *request, const char *ip,
 		     xf16cam_rtsp_channels_overlap(requested_channel, session->video_channel)) ||
 		    (video && session->audio_setup &&
 		     xf16cam_rtsp_channels_overlap(requested_channel, session->audio_channel))) {
-			n = snprintf(response, sizeof(response),
-			             "RTSP/1.0 400 Bad Request\r\nCSeq: %d\r\n\r\n", cseq);
+			n = XF16CAM_XIP_FORMAT(response, sizeof(response),
+			                       "RTSP/1.0 400 Bad Request\r\nCSeq: %d\r\n\r\n", cseq);
 		} else {
 			if (audio && !session->audio_acquired && xf16cam_audio_acquire() != 0) {
-				n = snprintf(response, sizeof(response),
-				             "RTSP/1.0 503 Service Unavailable\r\nCSeq: %d\r\n\r\n",
-				             cseq);
+				n = XF16CAM_XIP_FORMAT(response, sizeof(response),
+				                       "RTSP/1.0 503 Service Unavailable\r\nCSeq: %d\r\n\r\n",
+				                       cseq);
 			} else {
 				*channel = requested_channel;
 				if (audio) {
@@ -805,46 +806,46 @@ static int xf16cam_rtsp_reply(int fd, const char *request, const char *ip,
 				} else {
 					session->video_setup = 1;
 				}
-				n = snprintf(response, sizeof(response),
-				             "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\n"
-				             "Transport: RTP/AVP/TCP;unicast;interleaved=%u-%u\r\n\r\n",
-				             cseq, (unsigned int)*channel,
-				             (unsigned int)*channel + 1U);
+				n = XF16CAM_XIP_FORMAT(response, sizeof(response),
+				                       "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\n"
+				                       "Transport: RTP/AVP/TCP;unicast;interleaved=%u-%u\r\n\r\n",
+				                       cseq, (unsigned int)*channel,
+				                       (unsigned int)*channel + 1U);
 			}
 		}
 	} else if (!strncmp(request, "PLAY ", 5)) {
 		if (!session->video_setup) {
-			n = snprintf(response, sizeof(response),
-			             "RTSP/1.0 455 Method Not Valid in This State\r\nCSeq: %d\r\n\r\n",
-			             cseq);
+			n = XF16CAM_XIP_FORMAT(response, sizeof(response),
+			                       "RTSP/1.0 455 Method Not Valid in This State\r\nCSeq: %d\r\n\r\n",
+			                       cseq);
 		} else if (session->audio_setup) {
-			n = snprintf(response, sizeof(response),
-			             "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\nRange: npt=0.000-\r\n"
-			             "RTP-Info: url=rtsp://%s:%u/stream/track1;seq=%u;rtptime=%lu,"
-			             "url=rtsp://%s:%u/stream/track2;seq=%u;rtptime=%lu\r\n\r\n",
-			             cseq, ip, XF16CAM_RTSP_PORT, video_sequence, (unsigned long)video_timestamp,
-			             ip, XF16CAM_RTSP_PORT, audio_sequence, (unsigned long)audio_timestamp);
+			n = XF16CAM_XIP_FORMAT(response, sizeof(response),
+			                       "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\nRange: npt=0.000-\r\n"
+			                       "RTP-Info: url=rtsp://%s:%u/stream/track1;seq=%u;rtptime=%lu,"
+			                       "url=rtsp://%s:%u/stream/track2;seq=%u;rtptime=%lu\r\n\r\n",
+			                       cseq, ip, XF16CAM_RTSP_PORT, video_sequence, (unsigned long)video_timestamp,
+			                       ip, XF16CAM_RTSP_PORT, audio_sequence, (unsigned long)audio_timestamp);
 		} else {
-			n = snprintf(response, sizeof(response),
-			             "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\nRange: npt=0.000-\r\n"
-			             "RTP-Info: url=rtsp://%s:%u/stream/track1;seq=%u;rtptime=%lu\r\n\r\n",
-			             cseq, ip, XF16CAM_RTSP_PORT, video_sequence,
-			             (unsigned long)video_timestamp);
+			n = XF16CAM_XIP_FORMAT(response, sizeof(response),
+			                       "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\nRange: npt=0.000-\r\n"
+			                       "RTP-Info: url=rtsp://%s:%u/stream/track1;seq=%u;rtptime=%lu\r\n\r\n",
+			                       cseq, ip, XF16CAM_RTSP_PORT, video_sequence,
+			                       (unsigned long)video_timestamp);
 		}
 	} else if (!strncmp(request, "TEARDOWN ", 9)) {
-		n = snprintf(response, sizeof(response),
-			     "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\n\r\n", cseq);
+		n = XF16CAM_XIP_FORMAT(response, sizeof(response),
+			               "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\n\r\n", cseq);
 		if (n > 0)
 			xf16cam_send_all(fd, response, (uint32_t)n);
 		return 2;
 	} else if (!strncmp(request, "GET_PARAMETER ", 14)) {
-		n = snprintf(response, sizeof(response),
-			     "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\n\r\n", cseq);
+		n = XF16CAM_XIP_FORMAT(response, sizeof(response),
+			               "RTSP/1.0 200 OK\r\nCSeq: %d\r\nSession: 58463136\r\n\r\n", cseq);
 	} else {
-		n = snprintf(response, sizeof(response),
-		             "RTSP/1.0 405 Method Not Allowed\r\nCSeq: %d\r\n"
-		             "Allow: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER\r\n\r\n",
-		             cseq);
+		n = XF16CAM_XIP_FORMAT(response, sizeof(response),
+		                       "RTSP/1.0 405 Method Not Allowed\r\nCSeq: %d\r\n"
+		                       "Allow: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER\r\n\r\n",
+		                       cseq);
 	}
 	if (n <= 0 || n >= (int)sizeof(response) ||
 	    xf16cam_send_all(fd, response, (uint32_t)n) != 0)
@@ -1032,7 +1033,7 @@ static void xf16cam_rtsp_client_task(void *arg)
 	uint32_t slot = (uint32_t)(uintptr_t)arg;
 	int fd = g_rtsp_clients[slot].fd;
 
-	snprintf(ip, sizeof(ip), "%s", xf16cam_net_ip());
+	XF16CAM_XIP_FORMAT(ip, sizeof(ip), "%s", xf16cam_net_ip());
 	xf16cam_stream_client(fd, ip);
 	closesocket(fd);
 	OS_ThreadSetInvalid(&g_rtsp_clients[slot].thread);
@@ -1057,7 +1058,7 @@ static void xf16cam_rtsp_server(int server)
 {
 	char ip[16];
 
-	snprintf(ip, sizeof(ip), "%s", xf16cam_net_ip());
+	XF16CAM_XIP_FORMAT(ip, sizeof(ip), "%s", xf16cam_net_ip());
 	printf("xf16cam ready: rtsp://%s:%u/stream\n", ip, XF16CAM_RTSP_PORT);
 	while (1) {
 		int client = accept(server, NULL, NULL);

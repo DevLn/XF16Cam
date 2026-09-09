@@ -13,6 +13,7 @@
 
 #include "xf16cam_media.h"
 #include "xf16cam_net.h"
+#include "xf16cam_xip.h"
 
 #define XF16CAM_STA_TIMEOUT_MS  (20000U)
 
@@ -33,13 +34,12 @@ static char g_hostname[16];
 __xip_text
 static void xf16cam_net_init_hostname(void)
 {
-	__xip_rodata static const char fmt[] = "XF16CAM-%02X%02X%02X";
 	const struct sysinfo *info = sysinfo_get();
 
 	if (info == NULL)
 		return;
-	snprintf(g_hostname, sizeof(g_hostname), fmt,
-	         info->mac_addr[3], info->mac_addr[4], info->mac_addr[5]);
+	XF16CAM_XIP_FORMAT(g_hostname, sizeof(g_hostname), "XF16CAM-%02X%02X%02X",
+	                   info->mac_addr[3], info->mac_addr[4], info->mac_addr[5]);
 	ethernetif_set_hostname(g_hostname);
 }
 

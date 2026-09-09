@@ -104,12 +104,26 @@ habits are load-bearing:
   same `> RAM` output section as `.text`, so every plain string literal —
   `snprintf` format strings especially — lands in the 64 KiB app slot that CI
   only leaves 8 KiB free in, no matter how the enclosing function is marked.
-  Only `.xip_rodata` reaches flash. In `xf16cam_http.c` use
-  `XF16CAM_HTTP_SEND_LITERAL` for static markup and `XF16CAM_HTTP_FORMAT` for
-  format strings; both park the literal in `__xip_rodata`. Measured on the
-  `/api/system` response: 520 bytes moved out of the app slot by switching four
-  `snprintf` calls to the macro. Reading a format string from XIP is safe —
-  only *disabling* flash while executing from it is not.
+  Only `.xip_rodata` reaches flash. `xf16cam_xip.h` exists to fix that:
+  `XF16CAM_XIP_FORMAT` parks a format string there and is used by
+  `xf16cam_http.c`, `main.c` and `xf16cam_net.c`. `xf16cam_http.c` adds two of
+  its own on the same pattern — `XF16CAM_HTTP_SEND_LITERAL` for static markup
+  and `XF16CAM_HTTP_MESSAGE` for the status/body pair of an error page. **No
+  new string literal in those files should be written without one of the
+  three.** Reading a format string from XIP is safe — only *disabling* flash
+  while executing from it is not.
+- Converting all three files freed **5,200 bytes of the app slot** (14,640 to
+  19,840 free on `ptz`, 20,248 on `no_ptz`) for 5,952 bytes of XIP and 260
+  bytes of compressed OTA image. That is the shape of the trade to keep making:
+  the app slot is the binding constraint, XIP and the OTA area are not.
+- The macros cost gcc's `-Wformat` checking, since the format is no longer a
+  literal at the call site. Move a string and change its arguments in separate
+  steps, and diff the literals (`grep -o '"[^"]*"' file | sort`) before and
+  after a bulk conversion — that catches a mangled string that a build cannot.
+- A `#ifdef` cannot appear inside a macro invocation, so resolve a build-variant
+  difference to a local first (`mode_button` in `xf16cam_http_page()` and
+  `xf16cam_http_system_json()`) rather than leaving the call as a bare
+  `snprintf`.
 - There is exactly one **104,046-byte capture arena** holding a single aligned
   ~100 KiB JPEG buffer, and no YUV framebuffer. Frames are captured one at a
   time and each buffer stays immutable until fully transmitted, so a slow client
