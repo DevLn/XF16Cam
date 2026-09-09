@@ -1134,6 +1134,9 @@ static int xf16cam_http_handle(int fd)
 		int led_on = xf16cam_form_value(body, "led_on", mode, sizeof(mode)) == 0 &&
 		             strcmp(mode, "true") == 0;
 		xf16cam_board_set_led(led_on);
+		/* Manual toggles persist; the automatic day/night path deliberately
+		 * does not, because it can flap every 5 s and would wear the sector. */
+		xf16cam_config_save_led(led_on);
 		xf16cam_http_led_json(fd);
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/ir_led") == 0) {
 		int ir_led_on = xf16cam_form_value(body, "ir_led_on", mode, sizeof(mode)) == 0 &&
