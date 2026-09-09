@@ -16,6 +16,8 @@ def main():
 	parser.add_argument("--elf", required=True)
 	parser.add_argument("--require-sram", action="append", default=[])
 	parser.add_argument("--require-xip", action="append", default=[])
+	parser.add_argument("--require-absent", action="append", default=[],
+	                    help="fail if the symbol is linked at all")
 	args = parser.parse_args()
 
 	try:
@@ -47,6 +49,16 @@ def main():
 					failures.append("{} is at 0x{:08x}, outside {}".format(
 						name, address, region
 					))
+
+	for name in args.require_absent:
+		matches = [(address, symbol) for address, symbol in symbols
+		           if symbol == name or symbol.startswith(name + ".")]
+		if not matches:
+			print("{:<48} {:>10} absent".format(name, "-"))
+		for address, symbol in matches:
+			failures.append("{} is linked at 0x{:08x} but must be absent".format(
+				symbol, address
+			))
 
 	if failures:
 		for failure in failures:

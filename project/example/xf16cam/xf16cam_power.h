@@ -11,6 +11,8 @@ typedef struct {
 
 int xf16cam_power_measure(void);
 const XF16CamPowerInfo *xf16cam_power_info(void);
+#ifdef NO_PTZ
 void xf16cam_power_hibernate(void);
+#endif
 
 #endif

@@ -557,9 +557,13 @@ static void xf16cam_http_page(int fd)
 	}
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "</span><b>Charging</b><span>Unknown</span>"
-	                  "</div><button type=button onclick=measurePower()>Measure voltage</button>"
+	                  "</div><button type=button onclick=measurePower()>Measure voltage</button>");
+	#ifdef NO_PTZ
+	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<form method=post action=/api/hibernate onsubmit=\"return confirm('Hibernate? Press PA20 to wake.')\">"
-	                  "<button type=submit>Hibernate</button></form>"
+	                  "<button type=submit>Hibernate</button></form>");
+	#endif
+	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<form method=post action=/api/reboot onsubmit=\"return confirm('Reboot now?')\">"
 	                  "<button type=submit>Reboot</button></form>"
 	                  "<small>Voltage is approximate; no auto cutoff. Rebooting drops streams; settings are kept.</small></section>");
@@ -1228,11 +1232,8 @@ static int xf16cam_http_handle(int fd)
 		}
 		XF16CAM_HTTP_MESSAGE(fd, "200 OK", "Rebooting...");
 		return XF16CAM_HTTP_COLD_REBOOT;
+	#ifdef NO_PTZ
 	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/hibernate") == 0) {
-		#ifndef NO_PTZ
-		XF16CAM_HTTP_MESSAGE(fd, "501 Not Implemented", "Hibernate is not supported on this board.");
-		return XF16CAM_HTTP_KEEP_RUNNING;
-		#else
 		if (xf16cam_update_begin() != 0) {
 			XF16CAM_HTTP_MESSAGE(fd, "409 Conflict", "Device is busy.");
 			return XF16CAM_HTTP_KEEP_RUNNING;
@@ -1245,7 +1246,7 @@ static int xf16cam_http_handle(int fd)
 		}
 		XF16CAM_HTTP_MESSAGE(fd, "200 OK", "Hibernating; press PA20 to wake.");
 		return XF16CAM_HTTP_HIBERNATE;
-		#endif
+	#endif
 	} else {
 		XF16CAM_HTTP_MESSAGE(fd, "404 Not Found", "Page not found.");
 	}
@@ -1277,11 +1278,14 @@ static void xf16cam_http_task(void *arg)
 				printf("xf16cam HTTP: SD eject failed before restart\n");
 			if (action == XF16CAM_HTTP_OTA_REBOOT)
 				ota_reboot();
+			/* PTZ builds have no hibernate route or button. */
+			#ifdef NO_PTZ
 			if (action == XF16CAM_HTTP_HIBERNATE) {
 				xf16cam_power_hibernate();
 				xf16cam_update_end();
 				continue;
 			}
+			#endif
 			HAL_PRCM_SetCPUABootFlag(PRCM_CPUA_BOOT_FROM_COLD_RESET);
 			HAL_WDG_Reboot();
 		}

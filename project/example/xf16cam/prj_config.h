@@ -79,6 +79,12 @@ extern "C" {
 /* Enable the SDK platform's Wi-Fi/lwIP startup for this example. */
 #define PRJCONF_NET_EN                  1
 
+/* lwIP is built with its DNS client and IGMP on, but the camera uses neither,
+ * so xf16cam_lwip_stubs.c links them out of the image. Set one to 1 to link
+ * the real lwIP code back in; no SDK change or library rebuild is needed. */
+#define XF16CAM_LWIP_DNS_EN             0
+#define XF16CAM_LWIP_IGMP_EN            0
+
 #define    PRJCONF_CSI_SDC_EN           1
 
 #ifdef __cplusplus

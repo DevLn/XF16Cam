@@ -53,7 +53,7 @@ Variant: *PTZ* = PTZ boards only, *NO_PTZ* = fixed-camera boards only, blank = b
 | PTZ move / home | OK | OK | `POST /api/ptz` | PTZ | `mode=up\|down\|left\|right\|home`; 501 under NO_PTZ |
 | PTZ idle power-down | - | - | automatic | PTZ | Motors powered down 10 s after the last move |
 | Measure battery voltage | OK | OK | `POST /api/power` | | PA16/ADC6, median of 11; uncalibrated, charging always "Unknown" |
-| Hibernate | OK | OK | `POST /api/hibernate` | NO_PTZ | Wakes on PA20; 501 on PTZ builds; quiesces media first |
+| Hibernate | OK | OK | `POST /api/hibernate` | NO_PTZ | Wakes on PA20; quiesces media first; PTZ builds have no route or button (404) |
 | Mount / check SD card | OK | OK | `POST /api/sd/refresh` | | 503 when no readable FAT card |
 | Safely eject SD card | OK | OK | `POST /api/sd/eject` | | Releases the shared PA23 rail |
 | Format SD card (FAT32) | OK | OK | `POST /api/sd/format` | | Destructive |

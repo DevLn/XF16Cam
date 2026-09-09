@@ -58,6 +58,30 @@ upload the full serial image through the web updater.
 matter live in `gcc/localconfig.mk` (XIP on, JPEG on, PSRAM off, OTA policy) and
 `prj_config.h`.
 
+Unused SDK features are switched off **without editing the SDK**, so the SDK
+tree can be updated without losing anything:
+
+- `prj_config.h` sets `XF16CAM_LWIP_DNS_EN` and `XF16CAM_LWIP_IGMP_EN` to 0.
+  lwIP itself is still compiled with both on; `xf16cam_lwip_stubs.c` defines
+  every symbol the image imports from `dns.o` and `igmp.o`, so the linker never
+  extracts those members and their code, strings and buffers drop out. Set one
+  to 1 to link the real code back in with no library rebuild: DNS is needed to
+  reach a broker or NTP server by hostname, IGMP to be found by ONVIF
+  WS-Discovery or mDNS, or to receive multicast. A future lwIP that imports an
+  unstubbed symbol fails the link loudly with duplicate definitions; one that
+  renames them is caught by the CI sentinels below.
+- **Power management stays compiled in on both variants**, although PTZ boards
+  never hibernate. `__CONFIG_PM := n` looked like a free 4 KB of app slot on
+  `ptz`, but `hal_flashctrl.c` keys its SBUS re-initialisation workaround
+  (`FLASHC_TEMP_FIXED`) to `CONFIG_PM`: without it the flash controller is
+  not re-initialised before programmatic access, and the first flash write
+  after boot — an OTA piece or a settings save — hangs the device. A `ptz`
+  image built that way (v0.17.17) could no longer install updates and had to
+  be serial-flashed. CI requires `flashc_suspend`, the hook that exists only
+  when that code is compiled, in SRAM on both variants so this is not repeated. The hibernate route, button and function are still
+  `#ifdef NO_PTZ`; that part costs nothing and is purely about not exposing a
+  control the board cannot honour.
+
 ### Test
 
 One host test, run before the firmware build in both CI and the Dockerfile:
@@ -78,7 +102,8 @@ pure-logic code testable the same way.
 python3 tools/xf16cam/check_symbol_placement.py \
   --elf project/example/xf16cam/gcc/xf16cam.axf \
   --require-sram xf16cam_http_flash_info --require-sram xf16cam_http_ota \
-  --require-xip xf16cam_http_start
+  --require-sram flashc_suspend --require-xip xf16cam_http_start \
+  --require-absent dns_table --require-absent igmp_group_list
 
 python3 tools/xf16cam/check_image_budget.py \
   --config project/example/xf16cam/image/xr872/image_auto_cal.cfg \
@@ -89,6 +114,9 @@ Budget minimums: 8 KiB free in the SRAM-loaded app slot, 64 KiB free in each of
 the XIP and compressed-OTA areas. The placement check exists because code that
 queries or writes flash must not be executing *from* flash — that is why
 `xf16cam_http_flash_info` and `xf16cam_http_ota` must stay in SRAM and uninlined.
+The absent sentinels prove the lwIP link-out still takes effect after an SDK
+update. `flashc_suspend`, the flash controller's PM hook, must be in SRAM on
+both variants: power management cannot be compiled out (see Build).
 
 CI builds both `ptz` and `no_ptz` variants; a change must compile under both.
 
@@ -112,14 +140,21 @@ habits are load-bearing:
   new string literal in those files should be written without one of the
   three.** Reading a format string from XIP is safe — only *disabling* flash
   while executing from it is not.
-- Converting all three files freed **5,200 bytes of the app slot** (14,640 to
-  19,840 free on `ptz`, 20,248 on `no_ptz`) for 5,952 bytes of XIP and 260
-  bytes of compressed OTA image. That is the shape of the trade to keep making:
-  the app slot is the binding constraint, XIP and the OTA area are not.
-- The macros cost gcc's `-Wformat` checking, since the format is no longer a
-  literal at the call site. Move a string and change its arguments in separate
-  steps, and diff the literals (`grep -o '"[^"]*"' file | sort`) before and
-  after a bulk conversion — that catches a mangled string that a build cannot.
+- Converting the string literals freed **5,200 bytes of the app slot**; the lwIP
+  link-out (see Build) then freed about 2.6 KB of XIP on both variants, and
+  dropping the hibernate route from PTZ builds another 840 bytes of their app
+  slot. The three reserves are now close to level: `ptz` has 20,680 free in the
+  app slot, 77,484 in XIP and 78,008 in the OTA area against floors of 8, 64
+  and 64 KiB; `no_ptz` has 20,248 / 79,588 / 78,584. Moving more from the app
+  slot into XIP only shifts which gate trips first. What adds real room is
+  removing things, as the link-out does, or revisiting the floors, not further
+  relocation.
+- The macros keep gcc's `-Wformat` checking: GCC 8 follows a `static const
+  char[]` initialised from a literal, so a mismatched argument still warns, as
+  verified with the project toolchain. Read the build log, though, since the
+  SDK is not built with `-Werror`. What nothing catches is a mangled literal —
+  a lost tag or a wrong JSON key — so diff the literals
+  (`grep -o '"[^"]*"' file | sort`) before and after a bulk conversion.
 - A `#ifdef` cannot appear inside a macro invocation, so resolve a build-variant
   difference to a local first (`mode_button` in `xf16cam_http_page()` and
   `xf16cam_http_system_json()`) rather than leaving the call as a bare
@@ -175,6 +210,8 @@ probes the sensor, then **releases** camera power. Resources are demand-driven.
 - **`xf16cam_storage.c`**, **`xf16cam_power.c`**, **`xf16cam_ptz.c`**,
   **`xf16cam_net.c`**, **`xf16cam_rail.c`** — SD card, PA16 battery ADC and
   hibernation, PTZ motion, Wi-Fi bring-up, shared rail refcount.
+- **`xf16cam_lwip_stubs.c`** — link-time stubs that keep lwIP's DNS client and
+  IGMP out of the image without touching the SDK (see Build).
 
 The DHCP hostname is `XF16CAM-<last three eFuse MAC bytes>`, built once in
 `xf16cam_net_start()` before `net_switch_mode()` and handed to the SDK's
@@ -231,8 +268,8 @@ JSON reads: `GET /api/scan`, `/api/audio`, `/api/led`, `/api/ir_led`, and
 
 Form-encoded writes: `POST /api/wifi`, `/api/ap`, `/api/media`, `/api/resolution`
 (these reboot), `/api/led`, `/api/ir_led`, `/api/ptz` (`mode=up|down|left|right|home`,
-501 under `NO_PTZ`), `/api/power` (measure battery), `/api/hibernate` (the
-inverse: 501 unless `NO_PTZ`),
+501 under `NO_PTZ`), `/api/power` (measure battery), `/api/hibernate` (`NO_PTZ`
+only; PTZ builds have neither the route nor the button, so it is a 404 there),
 `/api/sd/refresh`, `/api/sd/eject`, `/api/sd/format`, `/api/reboot` (both
 variants; 409 while an update holds the lock, no media quiesce), and `POST /api/ota`
 (streamed image, written to the staging area in 2 KiB pieces and only selected

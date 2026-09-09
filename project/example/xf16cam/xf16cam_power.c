@@ -76,6 +76,8 @@ const XF16CamPowerInfo *xf16cam_power_info(void)
 	return &g_power;
 }
 
+/* NO_PTZ only: PTZ boards have no wake button, so there would be no way back. */
+#ifdef NO_PTZ
 void xf16cam_power_hibernate(void)
 {
 	GPIO_InitParam input = {
@@ -104,3 +106,4 @@ void xf16cam_power_hibernate(void)
 	HAL_PRCM_SetCPUABootFlag(PRCM_CPUA_BOOT_FROM_COLD_RESET);
 	HAL_WDG_Reboot();
 }
+#endif /* NO_PTZ */

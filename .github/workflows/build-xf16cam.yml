@@ -71,7 +71,10 @@ jobs:
             --elf project/example/xf16cam/gcc/xf16cam.axf \
             --require-sram xf16cam_http_flash_info \
             --require-sram xf16cam_http_ota \
-            --require-xip xf16cam_http_start
+            --require-sram flashc_suspend \
+            --require-xip xf16cam_http_start \
+            --require-absent dns_table \
+            --require-absent igmp_group_list
 
       - name: Check 1 MiB flash budget
         shell: bash

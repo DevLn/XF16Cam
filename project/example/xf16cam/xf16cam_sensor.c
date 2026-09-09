@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 
 #include "compiler.h"
 #include "driver/chip/hal_gpio.h"

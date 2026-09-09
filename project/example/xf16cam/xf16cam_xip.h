@@ -18,11 +18,12 @@
  *
  * Two things to know before converting a call:
  *
- * - The format is no longer a literal at the call site, so gcc stops checking
- *   it against the arguments. Move a string and change its arguments in
- *   separate steps, and diff the literals before and after a bulk conversion
- *   (grep -o '"[^"]*"' file | sort) -- that catches a mangled string a build
- *   cannot.
+ * - gcc still checks the format against the arguments: GCC 8 follows a static
+ *   const char[] initialised from a literal, so a type mismatch warns exactly
+ *   as it would on a bare snprintf. Read the build log, though -- the SDK is
+ *   not built with -Werror. What nothing catches is a mangled literal, so
+ *   diff the literals before and after a bulk conversion
+ *   (grep -o '"[^"]*"' file | sort).
  * - A #ifdef cannot appear inside a macro invocation. Resolve a build-variant
  *   difference to a local first, the way xf16cam_http_page() does with
  *   mode_button.
