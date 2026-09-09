@@ -483,6 +483,13 @@ static void xf16cam_http_page(int fd)
 	                  "<button type=submit>Format FAT32</button></form>"
 	                  "<small>Formatting permanently erases the card. Ejecting lets the shared PA23 camera/SD rail power down while idle.</small></section></div>"
 	                  "<div id=system class=panel><section class=card><h2>Device</h2><div class=grid>");
+	/* Emitted separately rather than folded into the snprintf below: that call
+	 * carries #ifdef NO_PTZ in its argument list, which cannot appear inside a
+	 * macro invocation, so it cannot use XF16CAM_HTTP_FORMAT. */
+	length = XF16CAM_HTTP_FORMAT(dynamic, sizeof(dynamic),
+	                  "<b>DHCP hostname</b><span>%s</span>", xf16cam_net_hostname());
+	if (length > 0 && (size_t)length < sizeof(dynamic))
+		xf16cam_http_send_all(fd, dynamic, (size_t)length);
 	length = snprintf(dynamic, sizeof(dynamic),
 	                  "<b>Network mode</b><span>%s</span><b>IP address</b><span>%s</span>"
 	                  "<b>Wi-Fi MAC</b><span>%02X:%02X:%02X:%02X:%02X:%02X (eFuse)</span>"
@@ -689,10 +696,11 @@ static void xf16cam_http_system_json(int fd)
 	xf16cam_http_system_chunk(fd, body, sizeof(body),
 	                  XF16CAM_HTTP_FORMAT(body, sizeof(body),
 	                  "{\"ver\":\"" XF16CAM_VERSION "\",\"mode\":\"%s\",\"ip\":\"%s\","
+	                  "\"host\":\"%s\","
 	                  "\"mac\":\"%02X%02X%02X%02X%02X%02X\",\"up\":%lu,"
 	                  "\"boot\":\"%s\",\"temp\":%s,\"heap\":%lu,",
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "sta" : "ap",
-	                  xf16cam_net_ip(),
+	                  xf16cam_net_ip(), xf16cam_net_hostname(),
 	                  sysinfo->mac_addr[0], sysinfo->mac_addr[1],
 	                  sysinfo->mac_addr[2], sysinfo->mac_addr[3],
 	                  sysinfo->mac_addr[4], sysinfo->mac_addr[5],

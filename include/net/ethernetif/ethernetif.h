@@ -47,6 +47,11 @@ enum wlan_mode {
 
 struct netif *ethernetif_create(enum wlan_mode mode);
 void ethernetif_delete(struct netif *nif);
+#if LWIP_NETIF_HOSTNAME
+/* Copies into the static buffer that every netif's hostname points at, so the
+ * caller's storage does not have to outlive the interface. */
+void ethernetif_set_hostname(char *hostname);
+#endif
 err_t ethernetif_input(struct netif *nif, struct pbuf *p);
 #if (LWIP_MBUF_SUPPORT == 0)
 err_t ethernetif_raw_input(struct netif *nif, uint8_t *data, u16_t len);

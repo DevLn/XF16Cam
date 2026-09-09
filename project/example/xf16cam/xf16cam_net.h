@@ -10,5 +10,6 @@
 int xf16cam_net_start(const XF16CamConfig *config);
 XF16CamWifiMode xf16cam_net_mode(void);
 const char *xf16cam_net_ip(void);
+const char *xf16cam_net_hostname(void);
 
 #endif
