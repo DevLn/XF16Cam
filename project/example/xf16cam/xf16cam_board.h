@@ -8,10 +8,10 @@ void xf16cam_board_set_ready(void);
 void xf16cam_board_prepare_sleep(void);
 #ifdef NO_PTZ
 int xf16cam_board_mode_button_pressed(void);
-#else
+#endif
+/* Compiled on both variants; no-op and always 0 without an IR LED pin. */
 void xf16cam_board_set_ir_led(int on);
 int xf16cam_board_get_ir_led_on(void);
-#endif
 void xf16cam_board_set_led(int on);
 int xf16cam_board_get_led_on(void);
 

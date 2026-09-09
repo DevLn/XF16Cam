@@ -314,9 +314,6 @@ int xf16cam_board_get_led_on(void)
 	return HAL_GPIO_ReadPin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN) == GPIO_PIN_HIGH;
 }
 
-#ifndef NO_PTZ
-#endif
-
 //IR LED control functions for PTZ version
 __xip_text
 void xf16cam_board_set_ir_led(int on)
