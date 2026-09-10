@@ -10,6 +10,7 @@
 
 #include "xf16cam_board.h"
 #include "xf16cam_config.h"
+#include "xf16cam_log.h"
 #include "xf16cam_media.h"
 #include "xf16cam_storage.h"
 #include "xf16cam_sensor.h"
@@ -139,6 +140,8 @@ static void xf16cam_board_task(void *arg)
 		int mode_pressed = 0;
 		#endif
 		int reset_pressed = xf16cam_board_reset_button_pressed();
+
+		xf16cam_log_poll();	/* one UDP datagram of console output, if any */
 
 		//Reboot after 2 hours uptime to prevent driver/hardware lockup
 		// if (OS_TicksToMSecs(OS_GetTicks()) > 2U * 60U * 60U * 1000U) {

@@ -42,11 +42,16 @@ RUN printf '%s\n' \
     && chmod +x tools/mkimage
 
 # Build flash and OTA images. Pass BUILD_VARIANT=no_ptz for the fixed-camera
-# board; the default PTZ build leaves NO_PTZ undefined.
-RUN case "$BUILD_VARIANT" in \
-    ptz) symbols= ;; \
-    no_ptz) symbols=-DNO_PTZ ;; \
-    *) echo "Invalid BUILD_VARIANT: $BUILD_VARIANT (use ptz or no_ptz)" >&2; exit 1 ;; \
+# board; the default PTZ build leaves NO_PTZ undefined. A _netlog suffix adds
+# XF16CAM_NETLOG, the UDP console mirror (see xf16cam_log.c).
+RUN variant="$BUILD_VARIANT"; symbols=""; \
+    case "$variant" in \
+    *_netlog) symbols="-DXF16CAM_NETLOG"; variant="${variant%_netlog}" ;; \
+    esac; \
+    case "$variant" in \
+    ptz) ;; \
+    no_ptz) symbols="$symbols -DNO_PTZ" ;; \
+    *) echo "Invalid BUILD_VARIANT: $BUILD_VARIANT (use ptz or no_ptz, optionally with _netlog)" >&2; exit 1 ;; \
     esac \
     && make -C project/example/xf16cam/gcc \
     CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" \

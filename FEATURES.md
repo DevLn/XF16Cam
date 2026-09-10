@@ -39,6 +39,7 @@ Variant: *PTZ* = PTZ boards only, *NO_PTZ* = fixed-camera boards only, blank = b
 | MJPEG video stream | OK | OK | `GET /stream.mjpeg` | | Needs sensor + Web media mode; up to 3 clients; auto-retries after failure |
 | PCMU audio stream | OK | OK | `GET /stream.pcmu` | | AMIC; up to 3 clients; decoded in-browser via WebAudio |
 | Mic peak meter | OK | OK | `GET /api/audio` | | Live tab, polled every 2 s; JSON also has active, mean, packets, errors |
+| Console log mirror | - | OK | UDP broadcast to port 5514, `GET /api/log` | NETLOG | `XF16CAM_NETLOG` builds only; every printf, last 2 KiB in RAM; `tools/xf16cam/udplog.py` receives on a PC |
 | RTSP video stream | - | OK | `rtsp://<ip>:8554/stream` | | RTP/JPEG over RTSP/TCP; up to 3 clients; separate listener |
 | Switch media mode (web/rtsp) | OK | OK | `POST /api/media` | | Modes are exclusive; reboots |
 | Switch resolution | OK | OK | `POST /api/resolution` | | `qvga`/`vga`; 409 if sensor lacks VGA; reboots |

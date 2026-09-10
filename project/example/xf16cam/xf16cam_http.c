@@ -22,6 +22,7 @@
 #include "xf16cam_audio.h"
 #include "xf16cam_board.h"
 #include "xf16cam_http.h"
+#include "xf16cam_log.h"
 #include "xf16cam_media.h"
 #include "xf16cam_net.h"
 #include "xf16cam_power.h"
@@ -766,6 +767,24 @@ static void xf16cam_http_system_json(int fd)
 	                  (unsigned long)storage->free_mb));
 }
 
+#ifdef XF16CAM_NETLOG
+/* The console ring as text. Streamed like /api/system, so no Content-Length;
+ * "Connection: close" delimits the body. */
+__xip_text
+static void xf16cam_http_log(int fd)
+{
+	char chunk[256];
+	uint32_t cursor = 0;
+	int count;
+
+	xf16cam_http_begin(fd, "200 OK", "text/plain; charset=utf-8");
+	while ((count = xf16cam_log_read(&cursor, chunk, sizeof(chunk))) > 0) {
+		if (xf16cam_http_send_all(fd, chunk, (size_t)count) != 0)
+			break;
+	}
+}
+#endif
+
 __xip_text
 static int xf16cam_http_scan(void)
 {
@@ -1083,6 +1102,10 @@ static int xf16cam_http_handle(int fd)
 		xf16cam_http_scan_json(fd);
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/audio") == 0) {
 		xf16cam_http_audio_json(fd);
+#ifdef XF16CAM_NETLOG
+	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/log") == 0) {
+		xf16cam_http_log(fd);
+#endif
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/led") == 0) {
 		xf16cam_http_led_json(fd);
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/ir_led") == 0) {

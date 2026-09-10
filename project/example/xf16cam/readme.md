@@ -21,6 +21,10 @@ single-client RTSP stream without PSRAM or an SD card.
   configuration as the web page and reboots without exposing the password.
 - The serial `upgrade` command is an unconditional last-resort BootROM handoff;
   it remains available even if media, storage, or configuration state is stuck.
+- `ptz_netlog` / `no_ptz_netlog` builds (`XF16CAM_NETLOG`) mirror the whole
+  console to a UDP broadcast on port 5514 and to `GET /api/log`, for boards
+  whose serial pins are not reachable. Run `python tools/xf16cam/udplog.py`
+  on a PC in the same network to receive it; the UART output is unchanged.
 - Stream: `rtsp://<device-ip>:8554/stream`
 - The responsive web console has Live, Network, Storage, and System tabs, with
   a focal embedded MJPEG view that can switch exclusively with RTSP mode.

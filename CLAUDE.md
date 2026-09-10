@@ -33,7 +33,7 @@ lint step and no test runner beyond one host-compiled unit test.
 Windows (Docker, produces `dist/`):
 
 ```bat
-buildXF16Cam.bat ptz      REM or: buildXF16Cam.bat no_ptz
+buildXF16Cam.bat ptz      REM or: no_ptz, ptz_netlog, no_ptz_netlog
 ```
 
 Linux/CI-equivalent, with `arm-none-eabi-gcc` on `PATH`:
@@ -118,7 +118,18 @@ The absent sentinels prove the lwIP link-out still takes effect after an SDK
 update. `flashc_suspend`, the flash controller's PM hook, must be in SRAM on
 both variants: power management cannot be compiled out (see Build).
 
-CI builds both `ptz` and `no_ptz` variants; a change must compile under both.
+CI builds `ptz`, `no_ptz` and `ptz_netlog`; a change must compile under all
+of them. `-DXF16CAM_NETLOG` (the `_netlog` suffix) compiles in the console
+mirror: `xf16cam_log.c` installs its own libc stdout writer, so every
+`printf` in the system still reaches the UART and is also kept in a 2 KiB
+RAM ring that the board task broadcasts over UDP port 5514 and `GET /api/log`
+returns as text. It exists because the board has no serial connection
+without disassembly; `tools/xf16cam/udplog.py` is the PC side. The writer
+itself must stay in SRAM (no `__xip_text`), since printf runs while flash is
+disabled during OTA and settings writes. Nothing survives a reset, but the
+line the capture-stall watchdog prints before rebooting has left the board by
+then. Measured cost on `ptz`: 120 bytes of app slot, 376 bytes of XIP,
+plus the 2 KiB ring in `.bss`.
 
 ## Memory discipline
 
@@ -212,6 +223,8 @@ probes the sensor, then **releases** camera power. Resources are demand-driven.
   hibernation, PTZ motion, Wi-Fi bring-up, shared rail refcount.
 - **`xf16cam_lwip_stubs.c`** — link-time stubs that keep lwIP's DNS client and
   IGMP out of the image without touching the SDK (see Build).
+- **`xf16cam_log.c`** — `XF16CAM_NETLOG` only: console mirror to a RAM ring,
+  UDP broadcast and `/api/log` (see Build).
 
 The DHCP hostname is `XF16CAM-<last three eFuse MAC bytes>`, built once in
 `xf16cam_net_start()` before `net_switch_mode()` and handed to the SDK's
@@ -265,6 +278,8 @@ full). RTSP: `rtsp://<device-ip>:8554/stream` — force TCP transport in VLC, or
 
 JSON reads: `GET /api/scan`, `/api/audio`, `/api/led`, `/api/ir_led`, and
 `/api/system` (every System/Live/Storage diagnostic in one streamed response).
+`GET /api/log` (`XF16CAM_NETLOG` builds only) returns the last 2 KiB of
+console output as text.
 
 Form-encoded writes: `POST /api/wifi`, `/api/ap`, `/api/media`, `/api/resolution`
 (these reboot), `/api/led`, `/api/ir_led`, `/api/ptz` (`mode=up|down|left|right|home`,

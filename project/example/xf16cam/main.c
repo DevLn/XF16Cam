@@ -26,6 +26,7 @@
 #include "xf16cam_audio.h"
 #include "xf16cam_board.h"
 #include "xf16cam_http.h"
+#include "xf16cam_log.h"
 #include "xf16cam_media.h"
 #include "xf16cam_net.h"
 #include "xf16cam_rail.h"
@@ -1115,6 +1116,7 @@ int main(void)
 	int rtsp_server = -1;
 
 	platform_init();
+	xf16cam_log_init();	/* console mirror, if XF16CAM_NETLOG */
 	printf("xf16cam version %s\n", XF16CAM_VERSION);
 	if (xf16cam_rail_init() != 0)
 		printf("xf16cam media rail: initialization failed\n");
