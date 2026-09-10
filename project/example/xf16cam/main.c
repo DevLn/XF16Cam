@@ -77,7 +77,7 @@ static CAMERA_Mgmt mem_mgmt;
 static OS_Mutex_t g_camera_lock;
 static int g_camera_lock_ready;
 static int g_camera_initialized;
-static uint32_t g_camera_users;
+static volatile uint32_t g_camera_users;	/* read by the board task */
 /* The capture arena holds a single JPEG buffer; serialize capture-through-send
  * so a second client can't overwrite it while another client is still reading it. */
 static OS_Mutex_t g_capture_lock;
@@ -96,6 +96,16 @@ __xip_text
 uint32_t xf16cam_media_active_clients(void)
 {
 	return g_mjpeg_active_count + g_rtsp_active_count;
+}
+
+/* Sessions that hold the camera, as opposed to clients that are merely
+ * connected: an RTSP client between connect and PLAY, or one that only
+ * pulls audio, is not waiting for frames and must not trip the stall
+ * watchdog. */
+__xip_text
+uint32_t xf16cam_media_capturing(void)
+{
+	return g_camera_users;
 }
 
 static XF16CamMediaInfo g_media_info = {
@@ -289,6 +299,11 @@ static int xf16cam_camera_acquire(void)
 		g_camera_initialized = 1;
 	}
 	++g_camera_users;
+	/* Restart the stall clock. last_frame_ms otherwise still holds the
+	 * previous session's final frame, and a client arriving 30 s after
+	 * that was rebooted on the first board poll, before the cold sensor
+	 * re-init above could produce anything. */
+	g_media_info.last_frame_ms = OS_TicksToMSecs(OS_GetTicks());
 	result = 0;
 out:
 	OS_MutexUnlock(&g_camera_lock);

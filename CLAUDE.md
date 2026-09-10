@@ -212,10 +212,13 @@ probes the sensor, then **releases** camera power. Resources are demand-driven.
 - **`xf16cam_board.c`** — buttons, LEDs, and the `NO_PTZ` split: PTZ boards use
   PB20 (white LED), PA22 (IR), PB19 (reset) and have no mode button; NO_PTZ
   boards use PA21 (status), PA15 (mode), PA20 (reset). Its poll loop also runs
-  two automatic behaviors: **capture-stall recovery** (reboot if clients are
-  connected and `last_frame_ms` is 30 s stale — the older unconditional 2-hour
-  reboot is commented out, leave it that way) and, on PTZ builds, **day/night
-  switching** from a CDS sensor on ADC5 every 5 s.
+  two automatic behaviors: **capture-stall recovery** (reboot if a session
+  holds the camera, `xf16cam_media_capturing()`, and `last_frame_ms` is 30 s
+  stale; the stamp is reset whenever the camera is acquired, because it used
+  to keep the previous session's last frame and any client arriving 30 s
+  later was rebooted during the cold sensor re-init — the older unconditional
+  2-hour reboot is commented out, leave it that way) and, on PTZ builds,
+  **day/night switching** from a CDS sensor on ADC5 every 5 s.
 - **`xf16cam_audio.c`** — on-demand AMIC capture; publishes PCMU silence during
   the 2.1 s analogue settling window so the media clock stays intact.
 - **`xf16cam_storage.c`**, **`xf16cam_power.c`**, **`xf16cam_ptz.c`**,

@@ -149,8 +149,11 @@ static void xf16cam_board_task(void *arg)
 		// 	xf16cam_board_reboot();
 		// }
 
-		// Fallback recovery if capture stalls before the 2-hour mark
-		if (xf16cam_media_active_clients() > 0) {
+		// Fallback recovery if capture stalls before the 2-hour mark.
+		// Only sessions that hold the camera count: last_frame_ms is
+		// re-stamped when the camera is acquired, so a client that is
+		// connected but not yet playing cannot trip this.
+		if (xf16cam_media_capturing() > 0) {
 			uint32_t now = OS_TicksToMSecs(OS_GetTicks());
 			uint32_t last = xf16cam_media_info()->last_frame_ms;
 
