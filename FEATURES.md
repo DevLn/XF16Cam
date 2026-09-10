@@ -68,7 +68,7 @@ Variant: *PTZ* = PTZ boards only, *NO_PTZ* = fixed-camera boards only, blank = b
 | Media counters | OK | OK | Live tab, `/api/system` | | Frames, largest JPEG, capture errors, capacity, last-frame age, client count |
 | Pin map | OK | - | System tab | | Confirmed XF16 assignments, varies by variant |
 | Button state | OK | OK | System tab, `/api/system` | | `btn.mode` is `null` on PTZ boards, which have no mode button |
-| Capture-stall recovery | - | - | automatic | | Reboots if clients are connected and no frame for 30 s |
+| Capture-stall recovery | - | - | automatic | | Reboots if a session holds the camera and no frame for 30 s, counted from the camera being acquired |
 | Mode button (Web/RTSP toggle) | - | - | PA15 short press | NO_PTZ | Physical control |
 | Setup/reset to AP | - | - | PA20 / PB19 hold 3 s | | Physical control; PA20 on NO_PTZ, PB19 on PTZ |
 | Status / illumination LED | - | - | PA21 / PB20 | | NO_PTZ: blinks on boot, solid when ready. PTZ: off when ready |
