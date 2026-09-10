@@ -15,6 +15,7 @@
 #include "net/wlan/wlan.h"
 #include "net/wlan/wlan_ext_req.h"
 #include "ota/ota.h"
+#include "sys/sram_heap.h"
 #include "common/framework/net_ctrl.h"
 #include "common/framework/sysinfo.h"
 
@@ -34,7 +35,7 @@
 #define XF16CAM_HTTP_PORT         (80)
 #define XF16CAM_HTTP_REQUEST_SIZE (2048)
 #define XF16CAM_HTTP_SCAN_MAX     (12)
-#define XF16CAM_HTTP_STACK_SIZE   (4 * 1024)
+#define XF16CAM_HTTP_STACK_SIZE   (3 * 1024)
 #define XF16CAM_OTA_MAX_SIZE      (372 * 1024)
 #define XF16CAM_HTTP_TIMEOUT_MS   (15000)
 #define XF16CAM_HTTP_HEADER_MS    (5000)
@@ -65,8 +66,6 @@ static uint32_t g_flash_jedec;
 static uint32_t g_flash_size;
 
 static void xf16cam_http_message(int fd, const char *status, const char *message);
-
-extern void heap_get_space(uint8_t **start, uint8_t **end, uint8_t **current);
 
 __xip_text
 __attribute__((noinline))
@@ -100,17 +99,6 @@ static int xf16cam_http_chip_temperature(void)
 	value = temperature.Temperature;
 	return value >= 0 ? (int)((value * 10 + 8) / 16) :
 	                    -(int)((-value * 10 + 8) / 16);
-}
-
-__xip_text
-static size_t xf16cam_http_heap_headroom(void)
-{
-	uint8_t *start;
-	uint8_t *end;
-	uint8_t *current;
-
-	heap_get_space(&start, &end, &current);
-	return (size_t)(end - current);
 }
 
 __attribute__((noinline))
@@ -499,14 +487,14 @@ static void xf16cam_http_page(int fd)
 	                  "<b>DHCP hostname</b><span>%s</span>"
 	                  "<b>Network mode</b><span>%s</span><b>IP address</b><span>%s</span>"
 	                  "<b>Wi-Fi MAC</b><span>%02X:%02X:%02X:%02X:%02X:%02X (eFuse)</span>"
-	                  "<b>Heap top reserve</b><span>%lu bytes</span><b>Flash JEDEC ID</b><span>%02lX %02lX %02lX</span>"
+	                  "<b>Available SRAM heap</b><span>%lu bytes</span><b>Flash JEDEC ID</b><span>%02lX %02lX %02lX</span>"
 	                  "<b>Flash capacity</b><span>%lu KiB</span><b>Mode button</b><span>PA15 (%s)</span>"
 	                  "<b>Setup button</b><span>PA20 (%s)</span>",
 	                  xf16cam_net_hostname(),
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Open AP", xf16cam_net_ip(),
 	                  sysinfo->mac_addr[0], sysinfo->mac_addr[1], sysinfo->mac_addr[2],
 	                  sysinfo->mac_addr[3], sysinfo->mac_addr[4], sysinfo->mac_addr[5],
-	                  (unsigned long)xf16cam_http_heap_headroom(),
+	                  (unsigned long)sram_free_heap_size(),
 	                  (unsigned long)(g_flash_jedec & 0xff),
 	                  (unsigned long)((g_flash_jedec >> 8) & 0xff),
 	                  (unsigned long)((g_flash_jedec >> 16) & 0xff),
@@ -713,7 +701,7 @@ static void xf16cam_http_system_json(int fd)
 	                  sysinfo->mac_addr[4], sysinfo->mac_addr[5],
 	                  (unsigned long)uptime, xf16cam_http_boot_reason(),
 	                  temperature_text,
-	                  (unsigned long)xf16cam_http_heap_headroom()));
+	                  (unsigned long)sram_free_heap_size()));
 
 	xf16cam_http_system_chunk(fd, body, sizeof(body),
 	                  XF16CAM_XIP_FORMAT(body, sizeof(body),

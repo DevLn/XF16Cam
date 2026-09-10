@@ -256,7 +256,9 @@ inline JS helpers (`tab()`, `scan()`, `toggleAudio()`, `videoStop()`,
 - **Storage** — SD mount status, total/free space, check, safe eject, format
   FAT32.
 - **System** — flash identity, pin map, uptime, boot cause, chip temperature,
-  heap headroom, per-worker minimum spare stack, media/audio counters,
+  free SRAM heap (the SDK heap manager's live figure, `sram_free_heap_size()`;
+  the build uses `__CONFIG_MALLOC_MODE` 0x01), per-worker minimum spare
+  stack, media/audio counters,
   resolution switch (QVGA to native VGA where the sensor supports it), battery
   voltage measurement, hibernate (NO_PTZ builds only), and streamed OTA upload.
 
