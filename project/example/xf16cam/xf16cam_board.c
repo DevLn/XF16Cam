@@ -113,6 +113,7 @@ static void xf16cam_board_reboot(void)
 	if (xf16cam_storage_unmount() != 0)
 		printf("xf16cam board: SD eject failed before reboot\n");
 	OS_MSleep(250);
+	xf16cam_log_flush();	/* the reason printed above must leave the board */
 	HAL_PRCM_SetCPUABootFlag(PRCM_CPUA_BOOT_FROM_COLD_RESET);
 	HAL_WDG_Reboot();
 }

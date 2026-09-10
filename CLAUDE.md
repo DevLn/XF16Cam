@@ -126,10 +126,12 @@ RAM ring that the board task broadcasts over UDP port 5514 and `GET /api/log`
 returns as text. It exists because the board has no serial connection
 without disassembly; `tools/xf16cam/udplog.py` is the PC side. The writer
 itself must stay in SRAM (no `__xip_text`), since printf runs while flash is
-disabled during OTA and settings writes. Nothing survives a reset, but the
-line the capture-stall watchdog prints before rebooting has left the board by
-then. Measured cost on `ptz`: 120 bytes of app slot, 376 bytes of XIP,
-plus the 2 KiB ring in `.bss`.
+disabled during OTA and settings writes. Nothing survives a reset, so every
+deliberate reboot calls `xf16cam_log_flush()` first and the reason it printed
+leaves the board; a hard fault does not reboot at all (the ROM handler halts,
+and the hardware watchdog is not enabled), so a silent hang with no boot
+marker is a crash. Measured cost on `ptz`: 120 bytes of app slot, 376 bytes
+of XIP, plus the 2 KiB ring in `.bss`.
 
 ## Memory discipline
 

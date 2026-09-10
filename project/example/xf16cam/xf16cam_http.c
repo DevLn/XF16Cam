@@ -1299,6 +1299,7 @@ static void xf16cam_http_task(void *arg)
 			 * mode and OTA restarts cannot leave a mounted card dirty. */
 			if (xf16cam_storage_unmount() != 0)
 				printf("xf16cam HTTP: SD eject failed before restart\n");
+			xf16cam_log_flush();
 			if (action == XF16CAM_HTTP_OTA_REBOOT)
 				ota_reboot();
 			/* PTZ builds have no hibernate route or button. */

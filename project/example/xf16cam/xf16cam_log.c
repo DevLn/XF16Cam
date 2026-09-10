@@ -127,6 +127,24 @@ void xf16cam_log_poll(void)
 	g_log_info.datagrams++;
 }
 
+/* Drain the ring before a reboot. Bounded: the ring is eight datagrams,
+ * and a network that is down or a socket that cannot open gets a few tries
+ * rather than delaying the reset. */
+__xip_text
+void xf16cam_log_flush(void)
+{
+	int tries = (int)(XF16CAM_LOG_RING / XF16CAM_LOG_CHUNK) + 4;
+
+	while (tries-- > 0 && g_log_head != g_log_tail) {
+		uint32_t before = g_log_tail;
+
+		xf16cam_log_poll();
+		if (g_log_tail == before)
+			OS_MSleep(20);
+	}
+	OS_MSleep(20);	/* let lwIP hand the last datagram to the driver */
+}
+
 __xip_text
 const XF16CamLogInfo *xf16cam_log_info(void)
 {
