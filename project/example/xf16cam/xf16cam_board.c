@@ -33,6 +33,10 @@
 #define XF16CAM_BUTTON_POLL_MS       (50)
 #define XF16CAM_BUTTON_DEBOUNCE_MS   (100)
 #define XF16CAM_RESET_HOLD_MS        (3000)
+/* Upstream runs this task on 1 KiB. Ours also drains the console mirror
+ * (256-byte chunk), flushes it and unmounts the SD card on the watchdog
+ * reboot path, none of which is in the measured high-water mark, so keep
+ * the 2 KiB and read the System tab's spare-stack figure before trimming. */
 #define XF16CAM_BOARD_STACK_SIZE     (2*1024)
 #define XF16CAM_CAPTURE_STALL_MS     (30U * 1000U)
 #ifndef NO_PTZ
@@ -64,14 +68,12 @@ int xf16cam_board_reset_button_pressed(void)
 }
 
 #ifndef NO_PTZ
+static int g_cds_adc_ready;
+
 __xip_text
-static int xf16cam_board_cds_is_dark(void)
+static int xf16cam_board_cds_adc_init(void)
 {
 	ADC_InitParam param;
-	uint16_t samples[XF16CAM_CDS_SAMPLES];
-	uint32_t sample;
-	uint32_t total = 0;
-	unsigned int index;
 
 	memset(&param, 0, sizeof(param));
 	param.delay = 10;
@@ -80,14 +82,27 @@ static int xf16cam_board_cds_is_dark(void)
 	param.mode = ADC_CONTI_CONV;
 	if (HAL_ADC_Init(&param) != HAL_OK)
 		return -1;
+	g_cds_adc_ready = 1;
+	return 0;
+}
+
+__xip_text
+static int xf16cam_board_cds_is_dark(void)
+{
+	uint16_t samples[XF16CAM_CDS_SAMPLES];
+	uint32_t sample;
+	uint32_t total = 0;
+	unsigned int index;
+
+	// The ADC is initialized once at startup; re-initializing it on every check
+	// leaked heap on every cycle and drained it after a couple of hours.
+	if (!g_cds_adc_ready && xf16cam_board_cds_adc_init() != 0)
+		return -1;
 	for (index = 0; index < XF16CAM_CDS_SAMPLES; ++index) {
-		if (HAL_ADC_Conv_Polling(XF16CAM_CDS_CHANNEL, &sample, 100) != HAL_OK) {
-			HAL_ADC_DeInit();
+		if (HAL_ADC_Conv_Polling(XF16CAM_CDS_CHANNEL, &sample, 100) != HAL_OK)
 			return -1;
-		}
 		samples[index] = (uint16_t)(sample & 0xfff);
 	}
-	HAL_ADC_DeInit();
 	for (index = 1; index < XF16CAM_CDS_SAMPLES; ++index) {
 		uint16_t value = samples[index];
 		unsigned int sorted = index;
@@ -144,7 +159,6 @@ static void xf16cam_board_task(void *arg)
 
 		xf16cam_log_poll();	/* one UDP datagram of console output, if any */
 
-		//Reboot after 2 hours uptime to prevent driver/hardware lockup
 		// if (OS_TicksToMSecs(OS_GetTicks()) > 2U * 60U * 60U * 1000U) {
 		// 	printf("xf16cam board: rebooting after 6 hours uptime\n");
 		// 	xf16cam_board_reboot();
@@ -347,3 +361,4 @@ uint32_t xf16cam_board_stack_min_free(void)
 {
 	return OS_ThreadGetStackMinFreeSize(&g_board_thread);
 }
+
