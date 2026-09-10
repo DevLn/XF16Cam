@@ -27,13 +27,19 @@ ENV PATH="/opt/arm-gnu-toolchain/bin:${PATH}"
 WORKDIR /workspace
 COPY --exclude=./dist --exclude=./.git . .
 
-# Test RTSP request parser
+# Test RTSP request parser and MQTT payload generators
 RUN cc -std=c11 -Wall -Wextra -Werror \
     -Iinclude -Iproject/example/xf16cam \
     tests/xf16cam/test_rtsp_parser.c \
     project/example/xf16cam/xf16cam_rtsp_parser.c \
     -o /tmp/xf16cam-rtsp-parser-test \
-    && /tmp/xf16cam-rtsp-parser-test
+    && /tmp/xf16cam-rtsp-parser-test \
+    && cc -std=c11 -Wall -Wextra -Werror -DXF16CAM_MQTT \
+    -Iinclude -Iproject/example/xf16cam \
+    tests/xf16cam/test_mqtt_payload.c \
+    project/example/xf16cam/xf16cam_mqtt_payload.c \
+    -o /tmp/xf16cam-mqtt-payload-test \
+    && /tmp/xf16cam-mqtt-payload-test
 
 # Configure XR872 build
 RUN printf '%s\n' \
@@ -42,11 +48,17 @@ RUN printf '%s\n' \
     && chmod +x tools/mkimage
 
 # Build flash and OTA images. Pass BUILD_VARIANT=no_ptz for the fixed-camera
-# board; the default PTZ build leaves NO_PTZ undefined.
-RUN case "$BUILD_VARIANT" in \
-    ptz) symbols= ;; \
-    no_ptz) symbols=-DNO_PTZ ;; \
-    *) echo "Invalid BUILD_VARIANT: $BUILD_VARIANT (use ptz or no_ptz)" >&2; exit 1 ;; \
+# board; the default PTZ build leaves NO_PTZ undefined. The optional _mqtt
+# suffix (last) adds XF16CAM_MQTT, the Home Assistant MQTT client
+# (xf16cam_mqtt.c): ptz, no_ptz, ptz_mqtt, no_ptz_mqtt.
+RUN variant="$BUILD_VARIANT"; symbols=""; \
+    case "$variant" in \
+    *_mqtt) symbols="-DXF16CAM_MQTT"; variant="${variant%_mqtt}" ;; \
+    esac; \
+    case "$variant" in \
+    ptz) ;; \
+    no_ptz) symbols="-DNO_PTZ $symbols" ;; \
+    *) echo "Invalid BUILD_VARIANT: $BUILD_VARIANT (use ptz or no_ptz, optionally with _mqtt)" >&2; exit 1 ;; \
     esac \
     && make -C project/example/xf16cam/gcc \
     CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" \
@@ -60,20 +72,34 @@ RUN case "$BUILD_VARIANT" in \
 # stay compiled in on both variants: hal_flashctrl.c keys its SBUS re-init
 # workaround (FLASHC_TEMP_FIXED) to CONFIG_PM, and without it the first flash
 # write -- an OTA piece or a settings save -- hangs the device.
-RUN python3 tools/xf16cam/check_symbol_placement.py \
+# The MQTT sentinel proves the client is present only on _mqtt builds and,
+# when present, executes from XIP.
+RUN case "$BUILD_VARIANT" in \
+    *_mqtt) mqtt_check="--require-xip xf16cam_mqtt_task" ;; \
+    *) mqtt_check="--require-absent xf16cam_mqtt_task" ;; \
+    esac \
+    && python3 tools/xf16cam/check_symbol_placement.py \
     --elf project/example/xf16cam/gcc/xf16cam.axf \
     --require-sram xf16cam_http_flash_info \
     --require-sram xf16cam_http_ota \
     --require-sram flashc_suspend \
     --require-xip xf16cam_http_start \
     --require-absent dns_table \
-    --require-absent igmp_group_list
+    --require-absent igmp_group_list \
+    $mqtt_check
 
-# Check 1 MiB flash budget
-RUN mkdir -p dist \
+# Check 1 MiB flash budget. The Paho client and the discovery document cost
+# about 12 KB of XIP, more than the headroom above the 64 KiB floor, so
+# _mqtt builds keep a 56 KiB XIP reserve instead.
+RUN case "$BUILD_VARIANT" in \
+    *_mqtt) xip_reserve=56K ;; \
+    *) xip_reserve=64K ;; \
+    esac \
+    && mkdir -p dist \
     && python3 tools/xf16cam/check_image_budget.py \
     --config project/example/xf16cam/image/xr872/image_auto_cal.cfg \
     --image-dir project/example/xf16cam/image/xr872 \
+    --xip-reserve "$xip_reserve" \
     | tee dist/image-budget.txt
 
 # Package flash image

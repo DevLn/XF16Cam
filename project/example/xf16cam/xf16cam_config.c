@@ -10,16 +10,29 @@
 
 #define XF16CAM_CONFIG_MAGIC          (0x58464346UL)
 #define XF16CAM_CONFIG_SCHEMA_LEGACY  (1U)
-#define XF16CAM_CONFIG_SCHEMA         (2U)
+#define XF16CAM_CONFIG_SCHEMA_V2      (2U)
+#define XF16CAM_CONFIG_SCHEMA         (3U)
 
-/* Schema 2 gives the first byte formerly reserved by schema 1 a defined
- * meaning. Keep the layout unchanged so schema 1 records can be migrated. */
-_Static_assert(sizeof(XF16CamConfig) == 116, "XF16Cam config layout changed");
+/* Schema 1 and 2 records are 116 bytes: the fields up to and including psk,
+ * then the checksum at 112. Schema 3 appends the MQTT settings after psk, so
+ * the first 109 bytes of every schema are byte-identical and an old record
+ * migrates by copying that prefix. The loader reads a legacy record with its
+ * own length and checksum span; see xf16cam_config_load_legacy(). */
+#define XF16CAM_CONFIG_LEGACY_LENGTH           (116U)
+#define XF16CAM_CONFIG_LEGACY_CHECKSUM_OFFSET  (112U)
+
+_Static_assert(sizeof(XF16CamConfig) == 220, "XF16Cam config layout changed");
 _Static_assert(offsetof(XF16CamConfig, resolution) == 10,
 	       "XF16Cam resolution offset changed");
 _Static_assert(offsetof(XF16CamConfig, ssid) == 12,
 	       "XF16Cam SSID offset changed");
-_Static_assert(offsetof(XF16CamConfig, checksum) == 112,
+_Static_assert(offsetof(XF16CamConfig, psk) == 45,
+	       "XF16Cam PSK offset changed");
+_Static_assert(offsetof(XF16CamConfig, mqtt_interval_s) == 109,
+	       "XF16Cam legacy prefix changed");
+_Static_assert(offsetof(XF16CamConfig, mqtt_host) == 112,
+	       "XF16Cam MQTT host offset changed");
+_Static_assert(offsetof(XF16CamConfig, checksum) == 216,
 	       "XF16Cam checksum offset changed");
 
 static fdcm_handle_t *g_config_store;
@@ -29,17 +42,22 @@ static volatile unsigned int g_config_index;
 static volatile int g_update_active;
 static int g_config_lock_ready;
 
-static uint32_t xf16cam_config_checksum(const XF16CamConfig *config)
+static uint32_t xf16cam_config_checksum_span(const void *data, size_t length)
 {
-	const uint8_t *data = (const uint8_t *)config;
+	const uint8_t *bytes = data;
 	uint32_t hash = 2166136261UL;
 	size_t i;
 
-	for (i = 0; i < offsetof(XF16CamConfig, checksum); ++i) {
-		hash ^= data[i];
+	for (i = 0; i < length; ++i) {
+		hash ^= bytes[i];
 		hash *= 16777619UL;
 	}
 	return hash;
+}
+
+static uint32_t xf16cam_config_checksum(const XF16CamConfig *config)
+{
+	return xf16cam_config_checksum_span(config, offsetof(XF16CamConfig, checksum));
 }
 
 static void xf16cam_config_defaults(XF16CamConfig *config)
@@ -63,10 +81,70 @@ static int xf16cam_config_storage_valid(const XF16CamConfig *config)
 	    config->media_mode < XF16CAM_MEDIA_RTSP ||
 	    config->media_mode > XF16CAM_MEDIA_WEB ||
 	    config->ssid[XF16CAM_SSID_MAX_LEN] != '\0' ||
-	    config->psk[XF16CAM_PSK_MAX_LEN] != '\0') {
+	    config->psk[XF16CAM_PSK_MAX_LEN] != '\0' ||
+	    config->mqtt_host[XF16CAM_MQTT_HOST_MAX_LEN] != '\0' ||
+	    config->mqtt_user[XF16CAM_MQTT_USER_MAX_LEN] != '\0' ||
+	    config->mqtt_pass[XF16CAM_MQTT_PASS_MAX_LEN] != '\0') {
 		return 0;
 	}
 	return config->checksum == xf16cam_config_checksum(config);
+}
+
+/* Read a 116-byte schema 1 or 2 record, validate it against its own layout,
+ * and rebuild it as schema 3 with the MQTT settings cleared. Called once from
+ * init before any task runs, so the stack buffer is safe. Returns 0 when a
+ * migrated record is in *config. */
+__xip_text
+static int xf16cam_config_load_legacy(XF16CamConfig *config)
+{
+	uint8_t legacy[XF16CAM_CONFIG_LEGACY_LENGTH];
+	uint32_t magic;
+	uint32_t checksum;
+	uint16_t schema;
+	uint16_t length;
+
+	if (fdcm_read(g_config_store, legacy, sizeof(legacy)) != sizeof(legacy))
+		return -1;
+	memcpy(&magic, legacy, sizeof(magic));
+	memcpy(&schema, legacy + offsetof(XF16CamConfig, schema), sizeof(schema));
+	memcpy(&length, legacy + offsetof(XF16CamConfig, length), sizeof(length));
+	memcpy(&checksum, legacy + XF16CAM_CONFIG_LEGACY_CHECKSUM_OFFSET, sizeof(checksum));
+	if (magic != XF16CAM_CONFIG_MAGIC ||
+	    length != XF16CAM_CONFIG_LEGACY_LENGTH ||
+	    (schema != XF16CAM_CONFIG_SCHEMA_LEGACY &&
+	     schema != XF16CAM_CONFIG_SCHEMA_V2) ||
+	    checksum != xf16cam_config_checksum_span(legacy,
+	                                            XF16CAM_CONFIG_LEGACY_CHECKSUM_OFFSET))
+		return -1;
+
+	/* The legacy prefix (magic .. psk) is byte-identical in schema 3. */
+	memset(config, 0, sizeof(*config));
+	memcpy(config, legacy, offsetof(XF16CamConfig, mqtt_interval_s));
+	if (config->wifi_mode < XF16CAM_WIFI_AP ||
+	    config->wifi_mode > XF16CAM_WIFI_STA ||
+	    config->media_mode < XF16CAM_MEDIA_RTSP ||
+	    config->media_mode > XF16CAM_MEDIA_WEB ||
+	    config->ssid[XF16CAM_SSID_MAX_LEN] != '\0' ||
+	    config->psk[XF16CAM_PSK_MAX_LEN] != '\0' ||
+	    (schema == XF16CAM_CONFIG_SCHEMA_V2 &&
+	     config->resolution > XF16CAM_RESOLUTION_VGA))
+		return -1;
+	if (schema == XF16CAM_CONFIG_SCHEMA_LEGACY) {
+		/* The resolution byte was undefined in schema 1; never infer a
+		 * resolution from it. Make the first selection deterministic. */
+		config->resolution = XF16CAM_RESOLUTION_QVGA;
+	}
+	config->reserved = 0;
+	config->schema = XF16CAM_CONFIG_SCHEMA;
+	config->length = sizeof(*config);
+	config->checksum = xf16cam_config_checksum(config);
+	if (fdcm_write(g_config_store, config, sizeof(*config)) != sizeof(*config))
+		printf("xf16cam config: schema %u migration write failed; using RAM copy\n",
+		       schema);
+	else
+		printf("xf16cam config: migrated schema %u to %u\n", schema,
+		       XF16CAM_CONFIG_SCHEMA);
+	return 0;
 }
 
 __xip_text
@@ -94,38 +172,23 @@ int xf16cam_config_init(void)
 		return -1;
 	}
 
-	if (fdcm_read(g_config_store, config, sizeof(*config)) != sizeof(*config) ||
-	    !xf16cam_config_storage_valid(config) ||
-	    (config->schema != XF16CAM_CONFIG_SCHEMA_LEGACY &&
-	     config->schema != XF16CAM_CONFIG_SCHEMA) ||
-	    (config->schema == XF16CAM_CONFIG_SCHEMA &&
-	     config->resolution > XF16CAM_RESOLUTION_VGA)) {
+	if ((fdcm_read(g_config_store, config, sizeof(*config)) != sizeof(*config) ||
+	     !xf16cam_config_storage_valid(config) ||
+	     config->schema != XF16CAM_CONFIG_SCHEMA ||
+	     config->resolution > XF16CAM_RESOLUTION_VGA) &&
+	    xf16cam_config_load_legacy(config) != 0) {
 		xf16cam_config_defaults(config);
 		printf("xf16cam config: using defaults (AP mode)\n");
 		return 0;
 	}
 
-	if (config->schema == XF16CAM_CONFIG_SCHEMA_LEGACY) {
-		/* The resolution byte was undefined in schema 1; never infer a
-		 * resolution from it. Preserve the user's settings, but make the first
-		 * resolution selection deterministic and conservative. */
-		config->schema = XF16CAM_CONFIG_SCHEMA;
-		config->resolution = XF16CAM_RESOLUTION_QVGA;
-		config->reserved = 0;
-		config->checksum = xf16cam_config_checksum(config);
-		if (fdcm_write(g_config_store, config, sizeof(*config)) != sizeof(*config)) {
-			printf("xf16cam config: schema 1 migration write failed; using QVGA in RAM\n");
-		} else {
-			printf("xf16cam config: migrated schema 1 to 2 (resolution=QVGA)\n");
-		}
-	}
-
-	printf("xf16cam config: loaded schema=%u wifi=%s media=%s resolution=%s ssid=%s\n",
+	printf("xf16cam config: loaded schema=%u wifi=%s media=%s resolution=%s ssid=%s mqtt=%s\n",
 	       config->schema,
 	       config->wifi_mode == XF16CAM_WIFI_STA ? "STA" : "AP",
 	       config->media_mode == XF16CAM_MEDIA_WEB ? "WEB" : "RTSP",
 	       config->resolution == XF16CAM_RESOLUTION_VGA ? "VGA" : "QVGA",
-	       config->ssid);
+	       config->ssid,
+	       config->mqtt_host[0] != '\0' ? config->mqtt_host : "off");
 	return 0;
 }
 
@@ -237,6 +300,39 @@ int xf16cam_config_save_resolution(XF16CamResolution resolution)
 	}
 	config = *xf16cam_config_get();
 	config.resolution = resolution;
+	result = xf16cam_config_write(&config);
+	OS_MutexUnlock(&g_config_lock);
+	return result;
+}
+
+int xf16cam_config_save_mqtt(const char *host, uint16_t port, const char *user,
+                             const char *pass, uint8_t interval_s)
+{
+	XF16CamConfig config;
+	size_t host_len = strlen(host);
+	size_t user_len = strlen(user);
+	size_t pass_len = strlen(pass);
+	int result;
+
+	if (host_len > XF16CAM_MQTT_HOST_MAX_LEN ||
+	    user_len > XF16CAM_MQTT_USER_MAX_LEN ||
+	    pass_len > XF16CAM_MQTT_PASS_MAX_LEN)
+		return -1;
+	if (!g_config_lock_ready || OS_MutexLock(&g_config_lock, OS_WAIT_FOREVER) != OS_OK)
+		return -1;
+	if (g_update_active) {
+		OS_MutexUnlock(&g_config_lock);
+		return -1;
+	}
+	config = *xf16cam_config_get();
+	memset(config.mqtt_host, 0, sizeof(config.mqtt_host));
+	memset(config.mqtt_user, 0, sizeof(config.mqtt_user));
+	memset(config.mqtt_pass, 0, sizeof(config.mqtt_pass));
+	memcpy(config.mqtt_host, host, host_len);
+	memcpy(config.mqtt_user, user, user_len);
+	memcpy(config.mqtt_pass, pass, pass_len);
+	config.mqtt_port = port;
+	config.mqtt_interval_s = interval_s;
 	result = xf16cam_config_write(&config);
 	OS_MutexUnlock(&g_config_lock);
 	return result;
