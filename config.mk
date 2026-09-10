@@ -22,7 +22,7 @@ __CONFIG_LIBC_WRAP_STDIO ?= y
 # heap managed mode
 # 0x00: use stdlib
 # 0x01: use sys_heap
-__CONFIG_MALLOC_MODE ?= 0x00
+__CONFIG_MALLOC_MODE ?= 0x01
 
 # trace heap memory usage and error when using malloc, free, etc.
 __CONFIG_MALLOC_TRACE ?= n
