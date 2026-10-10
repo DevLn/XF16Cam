@@ -141,6 +141,7 @@ jobs:
             --config project/example/xf16cam/image/xr872/image_auto_cal.cfg \
             --image-dir project/example/xf16cam/image/xr872 \
             --xip-reserve ${{ contains(matrix.build_variant, '_mqtt') && '56K' || contains(matrix.build_variant, '_esphome') && '48K' || '64K' }} \
+            --ota-reserve ${{ contains(matrix.build_variant, '_esphome') && '60K' || '64K' }} \
             | tee dist/image-budget.txt
           {
             echo '```text'

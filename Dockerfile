@@ -123,17 +123,20 @@ RUN case "$BUILD_VARIANT" in \
 # Check 1 MiB flash budget. The Paho client and the discovery document cost
 # about 12 KB of XIP, more than the headroom above the 64 KiB floor, so
 # _mqtt builds keep a 56 KiB XIP reserve instead; the ESPHome server costs
-# about the same plus ChaCha20-Poly1305 and gets 48 KiB.
-RUN case "$BUILD_VARIANT" in \
+# about the same plus ChaCha20-Poly1305 and gets 48 KiB. Since upstream's
+# stack protector and crash detection (about 4 KB of XIP and 3.4 KB of the
+# compressed OTA image on every variant) the ESPHome image also sits a little
+# under the 64 KiB OTA floor, so it is checked with a 60 KiB OTA reserve.
+RUN ota_reserve=64K; case "$BUILD_VARIANT" in \
     *_mqtt) xip_reserve=56K ;; \
-    *_esphome) xip_reserve=48K ;; \
+    *_esphome) xip_reserve=48K; ota_reserve=60K ;; \
     *) xip_reserve=64K ;; \
     esac \
     && mkdir -p dist \
     && python3 tools/xf16cam/check_image_budget.py \
     --config project/example/xf16cam/image/xr872/image_auto_cal.cfg \
     --image-dir project/example/xf16cam/image/xr872 \
-    --xip-reserve "$xip_reserve" \
+    --xip-reserve "$xip_reserve" --ota-reserve "$ota_reserve" \
     > dist/image-budget.txt; rc=$?; cat dist/image-budget.txt; test "$rc" -eq 0
 # (no pipefail in /bin/sh: a tee pipe would hide a failed check behind tee's
 # status, which let an over-budget image through once)

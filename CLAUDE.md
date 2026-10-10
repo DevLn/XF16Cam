@@ -236,7 +236,10 @@ sees a held idle camera. Up to two clients (Home Assistant provisions the key
 over a second connection while the first is open); the task is created in
 `main()` next to the MQTT one, before the camera probe, for the same heap
 reason. `tools/xf16cam/esphome_check.py` (aioesphomeapi) exercises a device
-from a PC. `_esphome` builds are checked with `--xip-reserve 48K`. They
+from a PC. `_esphome` builds are checked with `--xip-reserve 48K` and, since
+upstream's stack protector and crash detection took about 4 KB of XIP and
+3.4 KB of the compressed OTA image on every variant, `--ota-reserve 60K`
+(`ptz_esphome`: 17,384 / 55,652 / 63,092 free). They
 also need the SDK's lwIP listen PCB pool raised from 2 to 3: HTTP and RTSP
 hold the two the SDK allows, so the third `listen()` fails (reported as
 "listen failed" on the Network card and in `esphome.state`), and there is
