@@ -21,4 +21,5 @@
 *.dia     binary
 *.elf     binary
 *.bin     binary
-*.exe     binary*.bat     text eol=crlf
+*.exe     binary
+*.bat     text eol=crlf
