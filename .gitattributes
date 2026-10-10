@@ -14,3 +14,11 @@
 *.elf     binary
 *.bin     binary
 *.exe     binary
+# SDK files rewritten at build time by GNU patch (patches/*.patch, applied
+# with patch -p1 in the Dockerfile and the workflow). patch refuses a target
+# whose line endings differ from the patch ("different line endings"), and a
+# Windows checkout with autocrlf would hand it CRLF files, so these stay LF
+# in every working tree.
+*.patch                               text eol=lf
+src/kernel/os/FreeRTOS/os_thread.c    text eol=lf
+include/net/lwip-1.4.1/lwipopts.h     text eol=lf
