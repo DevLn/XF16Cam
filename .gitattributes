@@ -1,3 +1,11 @@
+# Every text file checks out LF on every platform. The repository stores LF
+# only, the build runs in Linux containers, and GNU patch (patches/*.patch,
+# applied with patch -p1 by the Dockerfile and the workflow) refuses a target
+# whose line endings differ from the patch, which a CRLF checkout under
+# core.autocrlf would hand it. Batch files are the one exception: cmd.exe
+# wants CRLF. Refresh an existing checkout with: git checkout-index -a -f
+* text=auto eol=lf
+
 *.c       text
 *.cpp     text
 *.h       text
@@ -13,12 +21,4 @@
 *.dia     binary
 *.elf     binary
 *.bin     binary
-*.exe     binary
-# SDK files rewritten at build time by GNU patch (patches/*.patch, applied
-# with patch -p1 in the Dockerfile and the workflow). patch refuses a target
-# whose line endings differ from the patch ("different line endings"), and a
-# Windows checkout with autocrlf would hand it CRLF files, so these stay LF
-# in every working tree.
-*.patch                               text eol=lf
-src/kernel/os/FreeRTOS/os_thread.c    text eol=lf
-include/net/lwip-1.4.1/lwipopts.h     text eol=lf
+*.exe     binary*.bat     text eol=crlf
