@@ -88,9 +88,11 @@ tree can be updated without losing anything:
   2, is rewritten at build time by `patches/lwipopts.h.patch` on `_esphome`
   builds only, applied with `patch -p1` next to upstream's
   `patches/os_thread.c.patch` (see the ESPHome paragraph below); the header
-  in git stays the vendor's. `.gitattributes` pins the patch files and their
-  targets to LF: GNU patch rejects a CRLF target, which a Windows checkout
-  would otherwise hand the Docker build.
+  in git stays the vendor's. `.gitattributes` checks every text file out LF
+  (`* text=auto eol=lf`, batch files excepted): GNU patch rejects a CRLF
+  target, which a Windows checkout under autocrlf would otherwise hand the
+  Docker build. Refresh an older checkout with
+  `git ls-files -z | xargs -0 rm -f && git checkout -- .`.
 
 ### Test
 
