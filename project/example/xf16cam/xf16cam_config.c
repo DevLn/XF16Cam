@@ -257,8 +257,8 @@ int xf16cam_config_save_resolution(XF16CamResolution resolution)
 /* Called on every manual lamp toggle, so skip a write when nothing changed:
  * FDCM appends each record into one of about 34 slots and erases the whole
  * settings sector when they run out, and that sector also holds the Wi-Fi
- * credentials. For the same reason the automatic day/night switching must
- * never reach here -- see xf16cam_board_task(). */
+ * credentials. The automatic day/night switching drives the IR LED, not
+ * this lamp, so it never reaches here. */
 int xf16cam_config_save_led(int on)
 {
 	XF16CamConfig config;

@@ -347,11 +347,14 @@ void xf16cam_board_prepare_sleep(void)
 	#endif
 }
 
+/* Every manual lamp toggle comes through here, so this is where the choice
+ * persists. The boot restore passes the stored value back and writes nothing. */
 __xip_text
 void xf16cam_board_set_led(int on)
 {
 	HAL_GPIO_WritePin(XF16CAM_GPIO_PORT, XF16CAM_LED_PIN,
 	                  on ? GPIO_PIN_HIGH : GPIO_PIN_LOW);
+	xf16cam_config_save_led(on);
 }
 
 int xf16cam_board_get_led_on(void)
