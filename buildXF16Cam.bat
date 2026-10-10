@@ -1,8 +1,9 @@
 @echo off
 set "BUILD_VARIANT=%~1"
 if "%BUILD_VARIANT%"=="" set "BUILD_VARIANT=ptz"
-if /I not "%BUILD_VARIANT%"=="ptz" if /I not "%BUILD_VARIANT%"=="no_ptz" (
-	echo Usage: %~nx0 [ptz^|no_ptz]
+set "BASE_VARIANT=%BUILD_VARIANT:_netlog=%"
+if /I not "%BASE_VARIANT%"=="ptz" if /I not "%BASE_VARIANT%"=="no_ptz" (
+	echo Usage: %~nx0 [ptz^|no_ptz^|ptz_netlog^|no_ptz_netlog]
 	exit /b 1
 )
 

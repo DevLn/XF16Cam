@@ -15,6 +15,7 @@
 #include "net/wlan/wlan.h"
 #include "net/wlan/wlan_ext_req.h"
 #include "ota/ota.h"
+#include "sys/sram_heap.h"
 #include "common/framework/net_ctrl.h"
 #include "common/framework/sysinfo.h"
 
@@ -22,6 +23,7 @@
 #include "xf16cam_audio.h"
 #include "xf16cam_board.h"
 #include "xf16cam_http.h"
+#include "xf16cam_log.h"
 #include "xf16cam_media.h"
 #include "xf16cam_net.h"
 #include "xf16cam_power.h"
@@ -34,7 +36,7 @@
 #define XF16CAM_HTTP_PORT         (80)
 #define XF16CAM_HTTP_REQUEST_SIZE (2048)
 #define XF16CAM_HTTP_SCAN_MAX     (12)
-#define XF16CAM_HTTP_STACK_SIZE   (4 * 1024)
+#define XF16CAM_HTTP_STACK_SIZE   (3 * 1024)
 #define XF16CAM_OTA_MAX_SIZE      (372 * 1024)
 #define XF16CAM_HTTP_TIMEOUT_MS   (15000)
 #define XF16CAM_HTTP_HEADER_MS    (5000)
@@ -65,8 +67,6 @@ static uint32_t g_flash_jedec;
 static uint32_t g_flash_size;
 
 static void xf16cam_http_message(int fd, const char *status, const char *message);
-
-extern void heap_get_space(uint8_t **start, uint8_t **end, uint8_t **current);
 
 __xip_text
 __attribute__((noinline))
@@ -100,17 +100,6 @@ static int xf16cam_http_chip_temperature(void)
 	value = temperature.Temperature;
 	return value >= 0 ? (int)((value * 10 + 8) / 16) :
 	                    -(int)((-value * 10 + 8) / 16);
-}
-
-__xip_text
-static size_t xf16cam_http_heap_headroom(void)
-{
-	uint8_t *start;
-	uint8_t *end;
-	uint8_t *current;
-
-	heap_get_space(&start, &end, &current);
-	return (size_t)(end - current);
 }
 
 __attribute__((noinline))
@@ -499,14 +488,14 @@ static void xf16cam_http_page(int fd)
 	                  "<b>DHCP hostname</b><span>%s</span>"
 	                  "<b>Network mode</b><span>%s</span><b>IP address</b><span>%s</span>"
 	                  "<b>Wi-Fi MAC</b><span>%02X:%02X:%02X:%02X:%02X:%02X (eFuse)</span>"
-	                  "<b>Heap top reserve</b><span>%lu bytes</span><b>Flash JEDEC ID</b><span>%02lX %02lX %02lX</span>"
+	                  "<b>Available SRAM heap</b><span>%lu bytes</span><b>Flash JEDEC ID</b><span>%02lX %02lX %02lX</span>"
 	                  "<b>Flash capacity</b><span>%lu KiB</span><b>Mode button</b><span>PA15 (%s)</span>"
 	                  "<b>Setup button</b><span>PA20 (%s)</span>",
 	                  xf16cam_net_hostname(),
 	                  xf16cam_net_mode() == XF16CAM_WIFI_STA ? "Station" : "Open AP", xf16cam_net_ip(),
 	                  sysinfo->mac_addr[0], sysinfo->mac_addr[1], sysinfo->mac_addr[2],
 	                  sysinfo->mac_addr[3], sysinfo->mac_addr[4], sysinfo->mac_addr[5],
-	                  (unsigned long)xf16cam_http_heap_headroom(),
+	                  (unsigned long)sram_free_heap_size(),
 	                  (unsigned long)(g_flash_jedec & 0xff),
 	                  (unsigned long)((g_flash_jedec >> 8) & 0xff),
 	                  (unsigned long)((g_flash_jedec >> 16) & 0xff),
@@ -517,10 +506,12 @@ static void xf16cam_http_page(int fd)
 	length = XF16CAM_XIP_FORMAT(dynamic, sizeof(dynamic),
 	                  "<b>HTTP stack spare</b><span>%lu bytes</span>"
 	                  "<b>Audio stack spare</b><span>%lu bytes</span>"
-	                  "<b>Board stack spare</b><span>%lu bytes</span></div></section>",
+	                  "<b>Board stack spare</b><span>%lu bytes</span>"
+					  "<b>Crash task name</b><span>%s</span></div></section>",
 	                  (unsigned long)OS_ThreadGetStackMinFreeSize(&g_http_thread),
 	                  (unsigned long)xf16cam_audio_stack_min_free(),
-	                  (unsigned long)xf16cam_board_stack_min_free());
+	                  (unsigned long)xf16cam_board_stack_min_free(),
+					  xf16cam_board_get_crash_task_name());
 	xf16cam_http_send_all(fd, dynamic, length);
 	xf16cam_http_runtime(fd, dynamic, sizeof(dynamic));
 
@@ -713,7 +704,7 @@ static void xf16cam_http_system_json(int fd)
 	                  sysinfo->mac_addr[4], sysinfo->mac_addr[5],
 	                  (unsigned long)uptime, xf16cam_http_boot_reason(),
 	                  temperature_text,
-	                  (unsigned long)xf16cam_http_heap_headroom()));
+	                  (unsigned long)sram_free_heap_size()));
 
 	xf16cam_http_system_chunk(fd, body, sizeof(body),
 	                  XF16CAM_XIP_FORMAT(body, sizeof(body),
@@ -765,6 +756,24 @@ static void xf16cam_http_system_json(int fd)
 	                  (unsigned long)storage->total_mb,
 	                  (unsigned long)storage->free_mb));
 }
+
+#ifdef XF16CAM_NETLOG
+/* The console ring as text. Streamed like /api/system, so no Content-Length;
+ * "Connection: close" delimits the body. */
+__xip_text
+static void xf16cam_http_log(int fd)
+{
+	char chunk[256];
+	uint32_t cursor = 0;
+	int count;
+
+	xf16cam_http_begin(fd, "200 OK", "text/plain; charset=utf-8");
+	while ((count = xf16cam_log_read(&cursor, chunk, sizeof(chunk))) > 0) {
+		if (xf16cam_http_send_all(fd, chunk, (size_t)count) != 0)
+			break;
+	}
+}
+#endif
 
 __xip_text
 static int xf16cam_http_scan(void)
@@ -964,6 +973,7 @@ static int xf16cam_http_ota(int fd, char *body, int body_length, int content_len
 		                     "Active media could not stop safely. Close stream clients and try again.");
 		return XF16CAM_HTTP_KEEP_RUNNING;
 	}
+	HAL_WDG_Stop();
 	if (ota_push_init() != OTA_STATUS_OK || ota_push_start() != OTA_STATUS_OK)
 		goto fail;
 	upload_start = OS_TicksToMSecs(OS_GetTicks());
@@ -1083,6 +1093,10 @@ static int xf16cam_http_handle(int fd)
 		xf16cam_http_scan_json(fd);
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/audio") == 0) {
 		xf16cam_http_audio_json(fd);
+#ifdef XF16CAM_NETLOG
+	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/log") == 0) {
+		xf16cam_http_log(fd);
+#endif
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/led") == 0) {
 		xf16cam_http_led_json(fd);
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/ir_led") == 0) {
@@ -1279,6 +1293,7 @@ static void xf16cam_http_task(void *arg)
 			 * mode and OTA restarts cannot leave a mounted card dirty. */
 			if (xf16cam_storage_unmount() != 0)
 				printf("xf16cam HTTP: SD eject failed before restart\n");
+			xf16cam_log_flush();
 			if (action == XF16CAM_HTTP_OTA_REBOOT)
 				ota_reboot();
 			/* PTZ builds have no hibernate route or button. */

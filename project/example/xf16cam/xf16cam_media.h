@@ -17,6 +17,8 @@ int xf16cam_mjpeg_start(int fd);
 int xf16cam_media_client_connected(int fd);
 int xf16cam_media_quiesce_for_update(uint32_t timeout_ms);
 uint32_t xf16cam_media_active_clients(void);
+/* Sessions currently holding the camera (0 while it is powered down). */
+uint32_t xf16cam_media_capturing(void);
 const XF16CamMediaInfo *xf16cam_media_info(void);
 
 #endif

@@ -11,6 +11,7 @@
 #include "pm/pm.h"
 
 #include "xf16cam_board.h"
+#include "xf16cam_log.h"
 #include "xf16cam_power.h"
 #include "xf16cam_storage.h"
 
@@ -103,6 +104,7 @@ void xf16cam_power_hibernate(void)
 	/* A successful XR872 hibernation never returns and wakes through a cold
 	 * boot. Recover the same way if platform PM rejects or exits the request;
 	 * media and board services have already been quiesced by this point. */
+	xf16cam_log_flush();
 	HAL_PRCM_SetCPUABootFlag(PRCM_CPUA_BOOT_FROM_COLD_RESET);
 	HAL_WDG_Reboot();
 }

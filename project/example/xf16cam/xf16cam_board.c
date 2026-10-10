@@ -6,10 +6,14 @@
 #include "driver/chip/hal_adc.h"
 #include "driver/chip/hal_gpio.h"
 #include "driver/chip/hal_prcm.h"
+#include "driver/chip/hal_rtc.h"
 #include "driver/chip/hal_wdg.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 #include "xf16cam_board.h"
 #include "xf16cam_config.h"
+#include "xf16cam_log.h"
 #include "xf16cam_media.h"
 #include "xf16cam_storage.h"
 #include "xf16cam_sensor.h"
@@ -32,7 +36,12 @@
 #define XF16CAM_BUTTON_POLL_MS       (50)
 #define XF16CAM_BUTTON_DEBOUNCE_MS   (100)
 #define XF16CAM_RESET_HOLD_MS        (3000)
+/* Upstream runs this task on 1 KiB. Ours also drains the console mirror
+ * (256-byte chunk), flushes it and unmounts the SD card on the watchdog
+ * reboot path, none of which is in the measured high-water mark, so keep
+ * the 2 KiB and read the System tab's spare-stack figure before trimming. */
 #define XF16CAM_BOARD_STACK_SIZE     (2*1024)
+#define XF16CAM_BOARD_WDG_STACK_SIZE (512)
 #define XF16CAM_CAPTURE_STALL_MS     (30U * 1000U)
 #ifndef NO_PTZ
 #define XF16CAM_CDS_CHANNEL           ADC_CHANNEL_5
@@ -42,8 +51,12 @@
 #endif
 
 static OS_Thread_t g_board_thread;
+static OS_Thread_t g_board_wdg_thread;
 static volatile int g_board_ready;
 static volatile int g_board_sleeping;
+static char g_crash_task_name[32];
+
+#define CRASH_MAGIC_NUMBER  (0xAA)
 
 static int xf16cam_button_pressed(GPIO_Pin pin)
 {
@@ -63,14 +76,12 @@ int xf16cam_board_reset_button_pressed(void)
 }
 
 #ifndef NO_PTZ
+static int g_cds_adc_ready;
+
 __xip_text
-static int xf16cam_board_cds_is_dark(void)
+static int xf16cam_board_cds_adc_init(void)
 {
 	ADC_InitParam param;
-	uint16_t samples[XF16CAM_CDS_SAMPLES];
-	uint32_t sample;
-	uint32_t total = 0;
-	unsigned int index;
 
 	memset(&param, 0, sizeof(param));
 	param.delay = 10;
@@ -79,14 +90,27 @@ static int xf16cam_board_cds_is_dark(void)
 	param.mode = ADC_CONTI_CONV;
 	if (HAL_ADC_Init(&param) != HAL_OK)
 		return -1;
+	g_cds_adc_ready = 1;
+	return 0;
+}
+
+__xip_text
+static int xf16cam_board_cds_is_dark(void)
+{
+	uint16_t samples[XF16CAM_CDS_SAMPLES];
+	uint32_t sample;
+	uint32_t total = 0;
+	unsigned int index;
+
+	// The ADC is initialized once at startup; re-initializing it on every check
+	// leaked heap on every cycle and drained it after a couple of hours.
+	if (!g_cds_adc_ready && xf16cam_board_cds_adc_init() != 0)
+		return -1;
 	for (index = 0; index < XF16CAM_CDS_SAMPLES; ++index) {
-		if (HAL_ADC_Conv_Polling(XF16CAM_CDS_CHANNEL, &sample, 100) != HAL_OK) {
-			HAL_ADC_DeInit();
+		if (HAL_ADC_Conv_Polling(XF16CAM_CDS_CHANNEL, &sample, 100) != HAL_OK)
 			return -1;
-		}
 		samples[index] = (uint16_t)(sample & 0xfff);
 	}
-	HAL_ADC_DeInit();
 	for (index = 1; index < XF16CAM_CDS_SAMPLES; ++index) {
 		uint16_t value = samples[index];
 		unsigned int sorted = index;
@@ -112,6 +136,7 @@ static void xf16cam_board_reboot(void)
 	if (xf16cam_storage_unmount() != 0)
 		printf("xf16cam board: SD eject failed before reboot\n");
 	OS_MSleep(250);
+	xf16cam_log_flush();	/* the reason printed above must leave the board */
 	HAL_PRCM_SetCPUABootFlag(PRCM_CPUA_BOOT_FROM_COLD_RESET);
 	HAL_WDG_Reboot();
 }
@@ -143,14 +168,18 @@ static void xf16cam_board_task(void *arg)
 		#endif
 		int reset_pressed = xf16cam_board_reset_button_pressed();
 
-		//Reboot after 2 hours uptime to prevent driver/hardware lockup
+		xf16cam_log_poll();	/* one UDP datagram of console output, if any */
+
 		// if (OS_TicksToMSecs(OS_GetTicks()) > 2U * 60U * 60U * 1000U) {
 		// 	printf("xf16cam board: rebooting after 6 hours uptime\n");
 		// 	xf16cam_board_reboot();
 		// }
 
-		// Fallback recovery if capture stalls before the 2-hour mark
-		if (xf16cam_media_active_clients() > 0) {
+		// Fallback recovery if capture stalls before the 2-hour mark.
+		// Only sessions that hold the camera count: last_frame_ms is
+		// re-stamped when the camera is acquired, so a client that is
+		// connected but not yet playing cannot trip this.
+		if (xf16cam_media_capturing() > 0) {
 			uint32_t now = OS_TicksToMSecs(OS_GetTicks());
 			uint32_t last = xf16cam_media_info()->last_frame_ms;
 
@@ -290,6 +319,14 @@ int xf16cam_board_init(void)
 		printf("xf16cam board thread create failed\n");
 		return -1;
 	}
+
+	xf16cam_board_init_hardware_watchdog();
+	if (OS_ThreadCreate(&g_board_wdg_thread, "xf16cam-wdg", xf16cam_board_wdg_task,
+		 				NULL, OS_PRIORITY_IDLE, XF16CAM_BOARD_WDG_STACK_SIZE) != OS_OK) {
+		printf("xf16cam board watchdog thread create failed\n");
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -348,3 +385,124 @@ uint32_t xf16cam_board_stack_min_free(void)
 {
 	return OS_ThreadGetStackMinFreeSize(&g_board_thread);
 }
+
+// Stack overflow hook for FreeRTOS tasks, method name must be exactly vApplicationStackOverflowHook
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
+  printf("Stack overflow in task %s\n", pcTaskName);
+
+  __disable_irq(); // Disable interrupts to prevent further damage
+
+  uint32_t name_address = (uint32_t)pcTaskName;
+
+  uint8_t byte0 = (name_address >> 24) & 0xFF;
+  uint8_t byte1 = (name_address >> 16) & 0xFF;
+  uint8_t byte2 = (name_address >> 8) & 0xFF;
+  uint8_t byte3 = name_address & 0xFF;
+
+  HAL_RTC_SetYYMMDD(byte0, byte1, byte2, byte3);
+
+  HAL_RTC_SetDDHHMMSS((RTC_WeekDay)CRASH_MAGIC_NUMBER, 0, 0, 0);
+
+  // Reboot the system to recover from stack overflow
+  HAL_WDG_Reboot();
+  while (1) {
+    __NOP(); // Do nothing, just wait for the system to reboot
+  }
+}
+
+const char *xf16cam_board_get_crash_task_name(void)
+{
+    return g_crash_task_name;
+}
+
+void xf16cam_board_check_previous_crash(void) {
+  uint8_t b0, b1, b2, b3;
+  RTC_WeekDay wday;
+  uint8_t h, m, s;
+
+  HAL_RTC_GetYYMMDD(&b0, &b1, &b2, &b3);
+  HAL_RTC_GetDDHHMMSS(&wday, &h, &m, &s);
+
+  if ((uint8_t)wday == CRASH_MAGIC_NUMBER) {
+    uint32_t recovered_address = ((uint32_t)b0 << 24) | ((uint32_t)b1 << 16) |
+                                 ((uint32_t)b2 << 8) | (uint32_t)b3;
+
+    if (recovered_address >= 0x10000000 && recovered_address < 0x50000000) {
+      char *full_task_name = (char *)recovered_address;
+      memcpy(g_crash_task_name, full_task_name, sizeof(g_crash_task_name));
+      g_crash_task_name[11] = '\0'; // Ensure null termination
+      printf("STACK OVERFLOW in task: %s\n", full_task_name);
+    } else {
+      sprintf(g_crash_task_name, "INVALID");
+      printf(
+          "STACK OVERFLOW occurred, but the task name address is invalid.\n");
+    }
+    // Clear the crash information from the RTC
+    HAL_RTC_SetYYMMDD(0, 26, 1, 1);
+    HAL_RTC_SetDDHHMMSS(RTC_WDAY_MONDAY, 0, 0, 0);
+  } else {
+    sprintf(g_crash_task_name, "NONE"); // No previous crash detected
+  }
+}
+
+void xf16cam_board_init_hardware_watchdog(void)
+{
+    WDG_InitParam param;
+
+    param.hw.event = WDG_EVT_RESET;
+    param.hw.timeout = WDG_TIMEOUT_5SEC;
+	param.hw.resetCycle = WDG_DEFAULT_RESET_CYCLE;
+
+    HAL_WDG_Init(&param);
+    HAL_WDG_Start();
+}
+
+void xf16cam_board_wdg_task(void *pvParameters)
+{
+    (void)pvParameters;
+
+    while (1) {
+        HAL_WDG_Feed();
+        OS_MSleep(2000);
+    }
+}
+
+/* Callback triggered by the GCC compiler if a stack canary check fails */
+void __attribute__((noreturn)) __stack_chk_fail(void) {
+  uint32_t *sp;
+  uint32_t lr;
+
+  // 1. Get the current Link Register (return address of the caller)
+  lr = (uint32_t)__builtin_return_address(0);
+
+  // 2. Get the current Stack Pointer
+  __asm__ volatile("mov %0, sp" : "=r"(sp));
+
+  printf("\r\n============================================\r\n");
+  printf("!!! CRITICAL: Stack Smashing Detected !!!\r\n");
+  printf("Triggered near address: 0x%08X\r\n", lr);
+  printf("Current Stack Pointer (SP): %p\r\n", (void *)sp);
+  printf("============================================\r\n");
+
+  // 3. Raw Hex Dump of the Stack Memory
+  printf("Stack Dump (Top 64 words):\r\n");
+  for (int i = 0; i < 64; i++) {
+    if (i % 4 == 0) {
+      printf("\r\n0x%08X: ", (uint32_t)(sp + i));
+    }
+    printf("0x%08X ", sp[i]);
+  }
+  printf("\r\n============================================\r\n");
+
+  //Decode the address to find the corresponding source code line using addr2line:
+  //arm-none-eabi-addr2line -e your_firmware.elf 0x<THE_LR_ADDRESS>
+
+  // 4. Force a reboot using the hardware watchdog
+  HAL_WDG_Reboot();
+  while (1) {
+    __NOP(); // Do nothing, just wait for the system to reboot
+  }
+}
+
+/* Global canary variable required by the GCC compiler stack protector */
+uintptr_t __stack_chk_guard = 0xDEADC0DE; // Change this to a random runtime value during boot if possible

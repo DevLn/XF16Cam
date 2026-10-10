@@ -33,7 +33,7 @@ lint step and no test runner beyond one host-compiled unit test.
 Windows (Docker, produces `dist/`):
 
 ```bat
-buildXF16Cam.bat ptz      REM or: buildXF16Cam.bat no_ptz
+buildXF16Cam.bat ptz      REM or: no_ptz, ptz_netlog, no_ptz_netlog
 ```
 
 Linux/CI-equivalent, with `arm-none-eabi-gcc` on `PATH`:
@@ -118,7 +118,20 @@ The absent sentinels prove the lwIP link-out still takes effect after an SDK
 update. `flashc_suspend`, the flash controller's PM hook, must be in SRAM on
 both variants: power management cannot be compiled out (see Build).
 
-CI builds both `ptz` and `no_ptz` variants; a change must compile under both.
+CI builds `ptz`, `no_ptz` and `ptz_netlog`; a change must compile under all
+of them. `-DXF16CAM_NETLOG` (the `_netlog` suffix) compiles in the console
+mirror: `xf16cam_log.c` installs its own libc stdout writer, so every
+`printf` in the system still reaches the UART and is also kept in a 2 KiB
+RAM ring that the board task broadcasts over UDP port 5514 and `GET /api/log`
+returns as text. It exists because the board has no serial connection
+without disassembly; `tools/xf16cam/udplog.py` is the PC side. The writer
+itself must stay in SRAM (no `__xip_text`), since printf runs while flash is
+disabled during OTA and settings writes. Nothing survives a reset, so every
+deliberate reboot calls `xf16cam_log_flush()` first and the reason it printed
+leaves the board; a hard fault does not reboot at all (the ROM handler halts,
+and the hardware watchdog is not enabled), so a silent hang with no boot
+marker is a crash. Measured cost on `ptz`: 120 bytes of app slot, 376 bytes
+of XIP, plus the 2 KiB ring in `.bss`.
 
 ## Memory discipline
 
@@ -215,10 +228,13 @@ probes the sensor, then **releases** camera power. Resources are demand-driven.
 - **`xf16cam_board.c`** — buttons, LEDs, and the `NO_PTZ` split: PTZ boards use
   PB20 (white LED), PA22 (IR), PB19 (reset) and have no mode button; NO_PTZ
   boards use PA21 (status), PA15 (mode), PA20 (reset). Its poll loop also runs
-  two automatic behaviors: **capture-stall recovery** (reboot if clients are
-  connected and `last_frame_ms` is 30 s stale — the older unconditional 2-hour
-  reboot is commented out, leave it that way) and, on PTZ builds, **day/night
-  switching** from a CDS sensor on ADC5 every 5 s.
+  two automatic behaviors: **capture-stall recovery** (reboot if a session
+  holds the camera, `xf16cam_media_capturing()`, and `last_frame_ms` is 30 s
+  stale; the stamp is reset whenever the camera is acquired, because it used
+  to keep the previous session's last frame and any client arriving 30 s
+  later was rebooted during the cold sensor re-init — the older unconditional
+  2-hour reboot is commented out, leave it that way) and, on PTZ builds,
+  **day/night switching** from a CDS sensor on ADC5 every 5 s.
 - **`xf16cam_audio.c`** — on-demand AMIC capture; publishes PCMU silence during
   the 2.1 s analogue settling window so the media clock stays intact.
 - **`xf16cam_storage.c`**, **`xf16cam_power.c`**, **`xf16cam_ptz.c`**,
@@ -226,6 +242,8 @@ probes the sensor, then **releases** camera power. Resources are demand-driven.
   hibernation, PTZ motion, Wi-Fi bring-up, shared rail refcount.
 - **`xf16cam_lwip_stubs.c`** — link-time stubs that keep lwIP's DNS client and
   IGMP out of the image without touching the SDK (see Build).
+- **`xf16cam_log.c`** — `XF16CAM_NETLOG` only: console mirror to a RAM ring,
+  UDP broadcast and `/api/log` (see Build).
 
 The DHCP hostname is `XF16CAM-<last three eFuse MAC bytes>`, built once in
 `xf16cam_net_start()` before `net_switch_mode()` and handed to the SDK's
@@ -267,7 +285,9 @@ inline JS helpers (`tab()`, `scan()`, `toggleAudio()`, `videoStop()`,
 - **Storage** — SD mount status, total/free space, check, safe eject, format
   FAT32.
 - **System** — flash identity, pin map, uptime, boot cause, chip temperature,
-  heap headroom, per-worker minimum spare stack, media/audio counters,
+  free SRAM heap (the SDK heap manager's live figure, `sram_free_heap_size()`;
+  the build uses `__CONFIG_MALLOC_MODE` 0x01), per-worker minimum spare
+  stack, media/audio counters,
   resolution switch (QVGA to native VGA where the sensor supports it), battery
   voltage measurement, hibernate (NO_PTZ builds only), and streamed OTA upload.
 
@@ -279,6 +299,8 @@ full). RTSP: `rtsp://<device-ip>:8554/stream` — force TCP transport in VLC, or
 
 JSON reads: `GET /api/scan`, `/api/audio`, `/api/led`, `/api/ir_led`, and
 `/api/system` (every System/Live/Storage diagnostic in one streamed response).
+`GET /api/log` (`XF16CAM_NETLOG` builds only) returns the last 2 KiB of
+console output as text.
 
 Form-encoded writes: `POST /api/wifi`, `/api/ap`, `/api/media`, `/api/resolution`
 (these reboot), `/api/led`, `/api/ir_led`, `/api/ptz` (`mode=up|down|left|right|home`,

@@ -39,6 +39,7 @@ Variant: *PTZ* = PTZ boards only, *NO_PTZ* = fixed-camera boards only, blank = b
 | MJPEG video stream | OK | OK | `GET /stream.mjpeg` | | Needs sensor + Web media mode; up to 3 clients; auto-retries after failure |
 | PCMU audio stream | OK | OK | `GET /stream.pcmu` | | AMIC; up to 3 clients; decoded in-browser via WebAudio |
 | Mic peak meter | OK | OK | `GET /api/audio` | | Live tab, polled every 2 s; JSON also has active, mean, packets, errors |
+| Console log mirror | - | OK | UDP broadcast to port 5514, `GET /api/log` | NETLOG | `XF16CAM_NETLOG` builds only; every printf, last 2 KiB in RAM; `tools/xf16cam/udplog.py` receives on a PC |
 | RTSP video stream | - | OK | `rtsp://<ip>:8554/stream` | | RTP/JPEG over RTSP/TCP; up to 3 clients; separate listener |
 | Switch media mode (web/rtsp) | OK | OK | `POST /api/media` | | Modes are exclusive; reboots |
 | Switch resolution | OK | OK | `POST /api/resolution` | | `qvga`/`vga`; 409 if sensor lacks VGA; reboots |
@@ -68,7 +69,7 @@ Variant: *PTZ* = PTZ boards only, *NO_PTZ* = fixed-camera boards only, blank = b
 | Media counters | OK | OK | Live tab, `/api/system` | | Frames, largest JPEG, capture errors, capacity, last-frame age, client count |
 | Pin map | OK | - | System tab | | Confirmed XF16 assignments, varies by variant |
 | Button state | OK | OK | System tab, `/api/system` | | `btn.mode` is `null` on PTZ boards, which have no mode button |
-| Capture-stall recovery | - | - | automatic | | Reboots if clients are connected and no frame for 30 s |
+| Capture-stall recovery | - | - | automatic | | Reboots if a session holds the camera and no frame for 30 s, counted from the camera being acquired |
 | Mode button (Web/RTSP toggle) | - | - | PA15 short press | NO_PTZ | Physical control |
 | Setup/reset to AP | - | - | PA20 / PB19 hold 3 s | | Physical control; PA20 on NO_PTZ, PB19 on PTZ |
 | Status / illumination LED | - | - | PA21 / PB20 | | NO_PTZ: blinks on boot, solid when ready. PTZ: off when ready |
