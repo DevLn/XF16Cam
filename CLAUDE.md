@@ -33,7 +33,8 @@ lint step and no test runner beyond one host-compiled unit test.
 Windows (Docker, produces `dist/`):
 
 ```bat
-buildXF16Cam.bat ptz      REM or: no_ptz, ptz_mqtt, no_ptz_mqtt, ptz_esphome, no_ptz_esphome
+buildXF16Cam.bat ptz      REM or: no_ptz, ptz_netlog, no_ptz_netlog, ptz_mqtt, no_ptz_mqtt,
+                          REM ptz_esphome, no_ptz_esphome, ptz_netlog_esphome
 ```
 
 Linux/CI-equivalent, with `arm-none-eabi-gcc` on `PATH`:
@@ -84,9 +85,12 @@ tree can be updated without losing anything:
   `#ifdef NO_PTZ`; that part costs nothing and is purely about not exposing a
   control the board cannot honour.
 - The one SDK value the camera cannot live with, lwIP's listen PCB pool of
-  2, is rewritten at build time by `tools/xf16cam/patch_sdk.py` on
-  `_esphome` builds only (see the ESPHome paragraph below); the header in
-  git stays the vendor's.
+  2, is rewritten at build time by `patches/lwipopts.h.patch` on `_esphome`
+  builds only, applied with `patch -p1` next to upstream's
+  `patches/os_thread.c.patch` (see the ESPHome paragraph below); the header
+  in git stays the vendor's. `.gitattributes` pins the patch files and their
+  targets to LF: GNU patch rejects a CRLF target, which a Windows checkout
+  would otherwise hand the Docker build.
 
 ### Test
 
@@ -142,15 +146,31 @@ The absent sentinels prove the lwIP link-out still takes effect after an SDK
 update. `flashc_suspend`, the flash controller's PM hook, must be in SRAM on
 both variants: power management cannot be compiled out (see Build).
 
-The variant name is `ptz` or `no_ptz` plus at most one integration suffix,
-`_mqtt` or `_esphome`. CI builds `ptz`, `no_ptz`, `ptz_mqtt`, `no_ptz_mqtt`,
+The variant name is `ptz` or `no_ptz` plus optional suffixes, in this order:
+`_netlog`, then at most one integration suffix, `_mqtt` or `_esphome`. CI
+builds `ptz`, `no_ptz`, `ptz_netlog`, `ptz_mqtt`, `no_ptz_mqtt`,
 `ptz_esphome` and `no_ptz_esphome`; a change must compile under all of them.
-The Dockerfile and the workflow each map the suffix to `-DXF16CAM_MQTT` or
-`-DXF16CAM_ESPHOME` on their own; keep the two in step. The two integrations
-are mutually exclusive (`xf16cam_config.h` has the `#error`): they expose the
-same device, only the protocol differs, and one image never carries both.
-Both CI sentinels (`xf16cam_mqtt_task`, `xf16cam_esphome_task`) are checked
-on every variant: in XIP on its own builds, absent elsewhere.
+The Dockerfile and the workflow each map the suffixes to `-DXF16CAM_NETLOG`,
+`-DXF16CAM_MQTT` or `-DXF16CAM_ESPHOME` on their own; keep the two in step.
+The two integrations are mutually exclusive (`xf16cam_config.h` has the
+`#error`): they expose the same device, only the protocol differs, and one
+image never carries both. Both CI sentinels (`xf16cam_mqtt_task`,
+`xf16cam_esphome_task`) are checked on every variant: in XIP on its own
+builds, absent elsewhere.
+
+`XF16CAM_NETLOG` (the `_netlog` suffix) compiles in the console mirror:
+`xf16cam_log.c` installs its own libc stdout writer, so every `printf` in the
+system still reaches the UART and is also kept in a 2 KiB RAM ring that the
+board task broadcasts over UDP port 5514 and `GET /api/log` returns as text.
+It exists because the board has no serial connection without disassembly;
+`tools/xf16cam/udplog.py` is the PC side. The writer itself must stay in SRAM
+(no `__xip_text`), since printf runs while flash is disabled during OTA and
+settings writes. Nothing survives a reset, so every deliberate reboot calls
+`xf16cam_log_flush()` first and the reason it printed leaves the board; a
+hard fault does not reboot at all (the ROM handler halts, and the hardware
+watchdog is not enabled), so a silent hang with no boot marker is a crash.
+Measured cost on `ptz`: 120 bytes of app slot, 376 bytes of XIP, plus the
+2 KiB ring in `.bss`.
 
 `XF16CAM_MQTT` (the `_mqtt` suffix) compiles in `xf16cam_mqtt.c`, an MQTT
 client for Home Assistant: retained device discovery on
@@ -222,10 +242,11 @@ hold the two the SDK allows, so the third `listen()` fails (reported as
 "listen failed" on the Network card and in `esphome.state`), and there is
 no project-side override because the define is unguarded and lwIP is
 compiled from the SDK tree. The SDK source in git is left alone:
-`tools/xf16cam/patch_sdk.py` rewrites the line at build time, run by the
-Dockerfile and the workflow on `_esphome` builds only (keep the two in
-step), on their own copy of the tree. It is idempotent and fails the build
-when the line has moved, so an SDK update cannot silently revert it.
+`patches/lwipopts.h.patch` changes the line at build time, applied with
+`patch -p1` by the Dockerfile and the workflow on `_esphome` builds only
+(keep the two in step), on their own copy of the tree, exactly like
+upstream's `patches/os_thread.c.patch`. A patch that no longer applies
+fails the build, so an SDK update cannot silently revert it.
 
 ## Memory discipline
 
@@ -336,6 +357,8 @@ probes the sensor, then **releases** camera power. Resources are demand-driven.
   hibernation, PTZ motion, Wi-Fi bring-up, shared rail refcount.
 - **`xf16cam_lwip_stubs.c`** — link-time stubs that keep lwIP's DNS client and
   IGMP out of the image without touching the SDK (see Build).
+- **`xf16cam_log.c`** — `XF16CAM_NETLOG` only: console mirror to a RAM ring,
+  UDP broadcast and `/api/log` (see Build).
 - **`xf16cam_mqtt.c` + `xf16cam_mqtt_payload.c`** — `XF16CAM_MQTT` only: the
   Home Assistant MQTT client (see Build) and its host-tested payload
   generators. It takes frames through `xf16cam_media_snapshot_begin/end()`
@@ -419,8 +442,9 @@ JSON reads: `GET /api/scan`, `/api/audio`, `/api/led`, `/api/ir_led`, and
 `/api/system` (every System/Live/Storage diagnostic in one streamed response;
 `XF16CAM_MQTT` builds add an `mqtt` object with the broker, counters and the
 task's spare stack, never the password; `XF16CAM_ESPHOME` builds an `esphome`
-object with client count, encryption and key state, counters and spare
-stack, never the key).
+object with task state, client count, encryption and key state, counters and
+spare stack, never the key). `GET /api/log` (`XF16CAM_NETLOG` builds only)
+returns the last 2 KiB of console output as text.
 
 Form-encoded writes: `POST /api/wifi`, `/api/ap`, `/api/media`, `/api/resolution`,
 `/api/mqtt` (`XF16CAM_MQTT` only: `host`, `port`, `user`, `pass`, `interval`;

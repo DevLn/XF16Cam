@@ -60,28 +60,36 @@ RUN printf '%s\n' \
     '__CONFIG_HOSC_TYPE ?= 40' > .config \
     && chmod +x tools/mkimage
 
+# Apply os_thread.c.patch
+RUN patch -p1 < patches/os_thread.c.patch
+
 # _esphome builds need a third lwIP listen PCB (HTTP and RTSP hold the two
-# the SDK allows); the SDK header is patched here, on this copy of the tree,
-# not in git. See tools/xf16cam/patch_sdk.py.
+# the SDK allows): patches/lwipopts.h.patch, applied the same way, on this
+# copy of the tree only.
 RUN case "$BUILD_VARIANT" in \
-    *_esphome) python3 tools/xf16cam/patch_sdk.py ;; \
+    *_esphome) patch -p1 < patches/lwipopts.h.patch ;; \
     esac
 
 # Build flash and OTA images. Pass BUILD_VARIANT=no_ptz for the fixed-camera
-# board; the default PTZ build leaves NO_PTZ undefined. One optional
-# integration suffix (last): _mqtt adds XF16CAM_MQTT, the Home Assistant MQTT
-# client (xf16cam_mqtt.c); _esphome adds XF16CAM_ESPHOME, the ESPHome native
-# API server (xf16cam_esphome.c). They are mutually exclusive: ptz, no_ptz,
-# ptz_mqtt, no_ptz_mqtt, ptz_esphome, no_ptz_esphome.
+# board; the default PTZ build leaves NO_PTZ undefined. Optional suffixes, in
+# this order: _netlog adds XF16CAM_NETLOG, the UDP console mirror (see
+# xf16cam_log.c); then one integration: _mqtt adds XF16CAM_MQTT, the Home
+# Assistant MQTT client (xf16cam_mqtt.c), or _esphome adds XF16CAM_ESPHOME,
+# the ESPHome native API server (xf16cam_esphome.c). So ptz, no_ptz,
+# ptz_netlog, ptz_mqtt, ptz_netlog_mqtt, ptz_esphome, ptz_netlog_esphome and
+# the no_ptz equivalents.
 RUN variant="$BUILD_VARIANT"; symbols=""; \
     case "$variant" in \
     *_mqtt) symbols="-DXF16CAM_MQTT"; variant="${variant%_mqtt}" ;; \
     *_esphome) symbols="-DXF16CAM_ESPHOME"; variant="${variant%_esphome}" ;; \
     esac; \
     case "$variant" in \
+    *_netlog) symbols="-DXF16CAM_NETLOG $symbols"; variant="${variant%_netlog}" ;; \
+    esac; \
+    case "$variant" in \
     ptz) ;; \
     no_ptz) symbols="-DNO_PTZ $symbols" ;; \
-    *) echo "Invalid BUILD_VARIANT: $BUILD_VARIANT (use ptz or no_ptz, optionally with _mqtt or _esphome)" >&2; exit 1 ;; \
+    *) echo "Invalid BUILD_VARIANT: $BUILD_VARIANT (use ptz or no_ptz, optionally with _netlog and one of _mqtt or _esphome)" >&2; exit 1 ;; \
     esac \
     && make -C project/example/xf16cam/gcc \
     CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" \

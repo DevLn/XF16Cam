@@ -23,6 +23,7 @@
 #include "xf16cam_audio.h"
 #include "xf16cam_board.h"
 #include "xf16cam_http.h"
+#include "xf16cam_log.h"
 #include "xf16cam_media.h"
 #include "xf16cam_mqtt.h"
 #include "xf16cam_esphome.h"
@@ -630,10 +631,12 @@ static void xf16cam_http_page(int fd)
 	length = XF16CAM_XIP_FORMAT(dynamic, sizeof(dynamic),
 	                  "<b>HTTP stack spare</b><span>%lu bytes</span>"
 	                  "<b>Audio stack spare</b><span>%lu bytes</span>"
-	                  "<b>Board stack spare</b><span>%lu bytes</span>",
+	                  "<b>Board stack spare</b><span>%lu bytes</span>"
+	                  "<b>Crash task name</b><span>%s</span>",
 	                  (unsigned long)OS_ThreadGetStackMinFreeSize(&g_http_thread),
 	                  (unsigned long)xf16cam_audio_stack_min_free(),
-	                  (unsigned long)xf16cam_board_stack_min_free());
+	                  (unsigned long)xf16cam_board_stack_min_free(),
+					  xf16cam_board_get_crash_task_name());
 	xf16cam_http_send_all(fd, dynamic, length);
 #ifdef XF16CAM_MQTT
 	length = XF16CAM_XIP_FORMAT(dynamic, sizeof(dynamic),
@@ -942,6 +945,24 @@ static void xf16cam_http_system_json(int fd)
 	                  (unsigned long)storage->free_mb));
 }
 
+#ifdef XF16CAM_NETLOG
+/* The console ring as text. Streamed like /api/system, so no Content-Length;
+ * "Connection: close" delimits the body. */
+__xip_text
+static void xf16cam_http_log(int fd)
+{
+	char chunk[256];
+	uint32_t cursor = 0;
+	int count;
+
+	xf16cam_http_begin(fd, "200 OK", "text/plain; charset=utf-8");
+	while ((count = xf16cam_log_read(&cursor, chunk, sizeof(chunk))) > 0) {
+		if (xf16cam_http_send_all(fd, chunk, (size_t)count) != 0)
+			break;
+	}
+}
+#endif
+
 __xip_text
 static int xf16cam_http_scan(void)
 {
@@ -1140,6 +1161,7 @@ static int xf16cam_http_ota(int fd, char *body, int body_length, int content_len
 		                     "Active media could not stop safely. Close stream clients and try again.");
 		return XF16CAM_HTTP_KEEP_RUNNING;
 	}
+	HAL_WDG_Stop();
 	if (ota_push_init() != OTA_STATUS_OK || ota_push_start() != OTA_STATUS_OK)
 		goto fail;
 	upload_start = OS_TicksToMSecs(OS_GetTicks());
@@ -1262,6 +1284,10 @@ static int xf16cam_http_handle(int fd)
 		xf16cam_http_scan_json(fd);
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/audio") == 0) {
 		xf16cam_http_audio_json(fd);
+#ifdef XF16CAM_NETLOG
+	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/log") == 0) {
+		xf16cam_http_log(fd);
+#endif
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/led") == 0) {
 		xf16cam_http_led_json(fd);
 	} else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/ir_led") == 0) {
@@ -1531,6 +1557,7 @@ static void xf16cam_http_task(void *arg)
 			 * mode and OTA restarts cannot leave a mounted card dirty. */
 			if (xf16cam_storage_unmount() != 0)
 				printf("xf16cam HTTP: SD eject failed before restart\n");
+			xf16cam_log_flush();
 			if (action == XF16CAM_HTTP_OTA_REBOOT)
 				ota_reboot();
 			/* PTZ builds have no hibernate route or button. */

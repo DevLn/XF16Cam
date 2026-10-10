@@ -6,10 +6,14 @@
 #include "driver/chip/hal_adc.h"
 #include "driver/chip/hal_gpio.h"
 #include "driver/chip/hal_prcm.h"
+#include "driver/chip/hal_rtc.h"
 #include "driver/chip/hal_wdg.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 #include "xf16cam_board.h"
 #include "xf16cam_config.h"
+#include "xf16cam_log.h"
 #include "xf16cam_media.h"
 #include "xf16cam_storage.h"
 #include "xf16cam_sensor.h"
@@ -37,6 +41,7 @@
  * reboot path, none of which is in the measured high-water mark, so keep
  * the 2 KiB and read the System tab's spare-stack figure before trimming. */
 #define XF16CAM_BOARD_STACK_SIZE     (2*1024)
+#define XF16CAM_BOARD_WDG_STACK_SIZE (512)
 #define XF16CAM_CAPTURE_STALL_MS     (30U * 1000U)
 #ifndef NO_PTZ
 #define XF16CAM_CDS_CHANNEL           ADC_CHANNEL_5
@@ -46,8 +51,13 @@
 #endif
 
 static OS_Thread_t g_board_thread;
+static OS_Thread_t g_board_wdg_thread;
 static volatile int g_board_ready;
 static volatile int g_board_sleeping;
+static char g_crash_task_name[32];
+
+#define CRASH_MAGIC_NUMBER  (0xAA)
+
 /* One ADC, two users: the CDS light check (PTZ, every 5 s) and the battery
  * divider (Measure button). The HAL refuses a second HAL_ADC_Init while the
  * first is live ("ADC state: 3"), which is how the battery measurement
@@ -157,6 +167,7 @@ void xf16cam_board_reboot(void)
 	if (xf16cam_storage_unmount() != 0)
 		printf("xf16cam board: SD eject failed before reboot\n");
 	OS_MSleep(250);
+	xf16cam_log_flush();	/* the reason printed above must leave the board */
 	HAL_PRCM_SetCPUABootFlag(PRCM_CPUA_BOOT_FROM_COLD_RESET);
 	HAL_WDG_Reboot();
 }
@@ -184,6 +195,8 @@ static void xf16cam_board_task(void *arg)
 		int mode_pressed = 0;
 		#endif
 		int reset_pressed = xf16cam_board_reset_button_pressed();
+
+		xf16cam_log_poll();	/* one UDP datagram of console output, if any */
 
 		// if (OS_TicksToMSecs(OS_GetTicks()) > 2U * 60U * 60U * 1000U) {
 		// 	printf("xf16cam board: rebooting after 6 hours uptime\n");
@@ -331,6 +344,14 @@ int xf16cam_board_init(void)
 		printf("xf16cam board thread create failed\n");
 		return -1;
 	}
+
+	xf16cam_board_init_hardware_watchdog();
+	if (OS_ThreadCreate(&g_board_wdg_thread, "xf16cam-wdg", xf16cam_board_wdg_task,
+		 				NULL, OS_PRIORITY_IDLE, XF16CAM_BOARD_WDG_STACK_SIZE) != OS_OK) {
+		printf("xf16cam board watchdog thread create failed\n");
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -390,3 +411,123 @@ uint32_t xf16cam_board_stack_min_free(void)
 	return OS_ThreadGetStackMinFreeSize(&g_board_thread);
 }
 
+// Stack overflow hook for FreeRTOS tasks, method name must be exactly vApplicationStackOverflowHook
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
+  printf("Stack overflow in task %s\n", pcTaskName);
+
+  __disable_irq(); // Disable interrupts to prevent further damage
+
+  uint32_t name_address = (uint32_t)pcTaskName;
+
+  uint8_t byte0 = (name_address >> 24) & 0xFF;
+  uint8_t byte1 = (name_address >> 16) & 0xFF;
+  uint8_t byte2 = (name_address >> 8) & 0xFF;
+  uint8_t byte3 = name_address & 0xFF;
+
+  HAL_RTC_SetYYMMDD(byte0, byte1, byte2, byte3);
+
+  HAL_RTC_SetDDHHMMSS((RTC_WeekDay)CRASH_MAGIC_NUMBER, 0, 0, 0);
+
+  // Reboot the system to recover from stack overflow
+  HAL_WDG_Reboot();
+  while (1) {
+    __NOP(); // Do nothing, just wait for the system to reboot
+  }
+}
+
+const char *xf16cam_board_get_crash_task_name(void)
+{
+    return g_crash_task_name;
+}
+
+void xf16cam_board_check_previous_crash(void) {
+  uint8_t b0, b1, b2, b3;
+  RTC_WeekDay wday;
+  uint8_t h, m, s;
+
+  HAL_RTC_GetYYMMDD(&b0, &b1, &b2, &b3);
+  HAL_RTC_GetDDHHMMSS(&wday, &h, &m, &s);
+
+  if ((uint8_t)wday == CRASH_MAGIC_NUMBER) {
+    uint32_t recovered_address = ((uint32_t)b0 << 24) | ((uint32_t)b1 << 16) |
+                                 ((uint32_t)b2 << 8) | (uint32_t)b3;
+
+    if (recovered_address >= 0x10000000 && recovered_address < 0x50000000) {
+      char *full_task_name = (char *)recovered_address;
+      memcpy(g_crash_task_name, full_task_name, sizeof(g_crash_task_name));
+      g_crash_task_name[11] = '\0'; // Ensure null termination
+      printf("STACK OVERFLOW in task: %s\n", full_task_name);
+    } else {
+      sprintf(g_crash_task_name, "INVALID");
+      printf(
+          "STACK OVERFLOW occurred, but the task name address is invalid.\n");
+    }
+    // Clear the crash information from the RTC
+    HAL_RTC_SetYYMMDD(0, 26, 1, 1);
+    HAL_RTC_SetDDHHMMSS(RTC_WDAY_MONDAY, 0, 0, 0);
+  } else {
+    sprintf(g_crash_task_name, "NONE"); // No previous crash detected
+  }
+}
+
+void xf16cam_board_init_hardware_watchdog(void)
+{
+    WDG_InitParam param;
+
+    param.hw.event = WDG_EVT_RESET;
+    param.hw.timeout = WDG_TIMEOUT_5SEC;
+	param.hw.resetCycle = WDG_DEFAULT_RESET_CYCLE;
+
+    HAL_WDG_Init(&param);
+    HAL_WDG_Start();
+}
+
+void xf16cam_board_wdg_task(void *pvParameters)
+{
+    (void)pvParameters;
+
+    while (1) {
+        HAL_WDG_Feed();
+        OS_MSleep(2000);
+    }
+}
+
+/* Callback triggered by the GCC compiler if a stack canary check fails */
+void __attribute__((noreturn)) __stack_chk_fail(void) {
+  uint32_t *sp;
+  uint32_t lr;
+
+  // 1. Get the current Link Register (return address of the caller)
+  lr = (uint32_t)__builtin_return_address(0);
+
+  // 2. Get the current Stack Pointer
+  __asm__ volatile("mov %0, sp" : "=r"(sp));
+
+  printf("\r\n============================================\r\n");
+  printf("!!! CRITICAL: Stack Smashing Detected !!!\r\n");
+  printf("Triggered near address: 0x%08X\r\n", lr);
+  printf("Current Stack Pointer (SP): %p\r\n", (void *)sp);
+  printf("============================================\r\n");
+
+  // 3. Raw Hex Dump of the Stack Memory
+  printf("Stack Dump (Top 64 words):\r\n");
+  for (int i = 0; i < 64; i++) {
+    if (i % 4 == 0) {
+      printf("\r\n0x%08X: ", (uint32_t)(sp + i));
+    }
+    printf("0x%08X ", sp[i]);
+  }
+  printf("\r\n============================================\r\n");
+
+  //Decode the address to find the corresponding source code line using addr2line:
+  //arm-none-eabi-addr2line -e your_firmware.elf 0x<THE_LR_ADDRESS>
+
+  // 4. Force a reboot using the hardware watchdog
+  HAL_WDG_Reboot();
+  while (1) {
+    __NOP(); // Do nothing, just wait for the system to reboot
+  }
+}
+
+/* Global canary variable required by the GCC compiler stack protector */
+uintptr_t __stack_chk_guard = 0xDEADC0DE; // Change this to a random runtime value during boot if possible

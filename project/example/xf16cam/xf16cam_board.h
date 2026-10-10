@@ -27,4 +27,9 @@ uint32_t xf16cam_board_stack_min_free(void);
  * console mirror first. Returns (without rebooting) while an update holds
  * the lock. */
 void xf16cam_board_reboot(void);
+
+void xf16cam_board_init_hardware_watchdog(void);
+void xf16cam_board_wdg_task(void *pvParameters);
+void xf16cam_board_check_previous_crash(void);
+const char *xf16cam_board_get_crash_task_name(void);
 #endif
