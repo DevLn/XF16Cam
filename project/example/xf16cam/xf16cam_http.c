@@ -308,8 +308,8 @@ static void xf16cam_http_mqtt_card(int fd, const XF16CamConfig *config)
 	                  "and Home Assistant device discovery. The broker is an IP address; blank turns MQTT off.</p>"
 	                  "<form method=post action=/api/mqtt><label>Broker IP"
 	                  "<input name=host maxlength=31 autocapitalize=none spellcheck=false placeholder=192.168.0.2 value=\"");
-	xf16cam_http_send_escaped(fd, (const uint8_t *)config->mqtt_host,
-	                          strlen(config->mqtt_host), 0);
+	xf16cam_http_send_escaped(fd, (const uint8_t *)config->u.mqtt.host,
+	                          strlen(config->u.mqtt.host), 0);
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "\"></label><label>Port<input type=number name=port min=1 max=65535 value=");
 	length = XF16CAM_XIP_FORMAT(dynamic, sizeof(dynamic), "%u",
@@ -318,8 +318,8 @@ static void xf16cam_http_mqtt_card(int fd, const XF16CamConfig *config)
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "></label><label>Username"
 	                  "<input name=user maxlength=31 autocapitalize=none spellcheck=false value=\"");
-	xf16cam_http_send_escaped(fd, (const uint8_t *)config->mqtt_user,
-	                          strlen(config->mqtt_user), 0);
+	xf16cam_http_send_escaped(fd, (const uint8_t *)config->u.mqtt.user,
+	                          strlen(config->u.mqtt.user), 0);
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "\"></label><label>Password"
 	                  "<input type=password name=pass maxlength=31 autocomplete=new-password>"
@@ -842,7 +842,7 @@ static void xf16cam_http_system_json(int fd)
 		                  "\"stack\":%lu},",
 		                  mqtt->enabled ? "true" : "false",
 		                  mqtt->connected ? "true" : "false",
-		                  config->mqtt_host,
+		                  config->u.mqtt.host,
 		                  (unsigned int)xf16cam_config_mqtt_port(config),
 		                  (unsigned int)xf16cam_config_mqtt_interval(config),
 		                  (unsigned long)mqtt->connects,
@@ -1262,8 +1262,8 @@ static int xf16cam_http_handle(int fd)
 			/* A blank password for the saved broker means "unchanged",
 			 * as with the Wi-Fi form. */
 			if (psk[0] == '\0' && ssid[0] != '\0' &&
-			    strcmp(ssid, current->mqtt_host) == 0)
-				memcpy(psk, current->mqtt_pass, sizeof(current->mqtt_pass));
+			    strcmp(ssid, current->u.mqtt.host) == 0)
+				memcpy(psk, current->u.mqtt.pass, sizeof(current->u.mqtt.pass));
 			invalid = xf16cam_config_save_mqtt(ssid, (uint16_t)port, user, psk,
 			                                   (uint8_t)interval) != 0;
 		}

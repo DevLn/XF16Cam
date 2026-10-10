@@ -14,10 +14,11 @@
 #define XF16CAM_CONFIG_SCHEMA         (3U)
 
 /* Schema 1 and 2 records are 116 bytes: the fields up to and including psk,
- * then the checksum at 112. Schema 3 appends the MQTT settings after psk, so
- * the first 109 bytes of every schema are byte-identical and an old record
- * migrates by copying that prefix. The loader reads a legacy record with its
- * own length and checksum span; see xf16cam_config_load_legacy(). */
+ * then the checksum at 112. Schema 3 appends the integration tag and block
+ * after psk, so the first 109 bytes of every schema are byte-identical and an
+ * old record migrates by copying that prefix. The loader reads a legacy
+ * record with its own length and checksum span; see
+ * xf16cam_config_load_legacy(). */
 #define XF16CAM_CONFIG_LEGACY_LENGTH           (116U)
 #define XF16CAM_CONFIG_LEGACY_CHECKSUM_OFFSET  (112U)
 
@@ -28,10 +29,16 @@ _Static_assert(offsetof(XF16CamConfig, ssid) == 12,
 	       "XF16Cam SSID offset changed");
 _Static_assert(offsetof(XF16CamConfig, psk) == 45,
 	       "XF16Cam PSK offset changed");
-_Static_assert(offsetof(XF16CamConfig, mqtt_interval_s) == 109,
+_Static_assert(offsetof(XF16CamConfig, feature) == 109,
 	       "XF16Cam legacy prefix changed");
-_Static_assert(offsetof(XF16CamConfig, mqtt_host) == 112,
-	       "XF16Cam MQTT host offset changed");
+_Static_assert(offsetof(XF16CamConfig, u) == 112,
+	       "XF16Cam integration block offset changed");
+_Static_assert(sizeof(((XF16CamConfig *)0)->u) == XF16CAM_CONFIG_BLOCK_SIZE,
+	       "XF16Cam integration block size changed");
+#ifdef XF16CAM_MQTT
+_Static_assert(sizeof(XF16CamMqttConfig) == XF16CAM_CONFIG_BLOCK_SIZE,
+	       "XF16Cam MQTT block must fill the integration block");
+#endif
 _Static_assert(offsetof(XF16CamConfig, checksum) == 216,
 	       "XF16Cam checksum offset changed");
 
@@ -69,9 +76,12 @@ static void xf16cam_config_defaults(XF16CamConfig *config)
 	config->wifi_mode = XF16CAM_WIFI_AP;
 	config->media_mode = XF16CAM_MEDIA_RTSP;
 	config->resolution = XF16CAM_RESOLUTION_QVGA;
+	config->feature = XF16CAM_CONFIG_FEATURE;
 	config->checksum = xf16cam_config_checksum(config);
 }
 
+/* Validates the prefix every variant shares; the integration block is the
+ * business of xf16cam_config_adopt_block(). */
 static int xf16cam_config_storage_valid(const XF16CamConfig *config)
 {
 	if (config->magic != XF16CAM_CONFIG_MAGIC ||
@@ -81,19 +91,44 @@ static int xf16cam_config_storage_valid(const XF16CamConfig *config)
 	    config->media_mode < XF16CAM_MEDIA_RTSP ||
 	    config->media_mode > XF16CAM_MEDIA_WEB ||
 	    config->ssid[XF16CAM_SSID_MAX_LEN] != '\0' ||
-	    config->psk[XF16CAM_PSK_MAX_LEN] != '\0' ||
-	    config->mqtt_host[XF16CAM_MQTT_HOST_MAX_LEN] != '\0' ||
-	    config->mqtt_user[XF16CAM_MQTT_USER_MAX_LEN] != '\0' ||
-	    config->mqtt_pass[XF16CAM_MQTT_PASS_MAX_LEN] != '\0') {
+	    config->psk[XF16CAM_PSK_MAX_LEN] != '\0') {
 		return 0;
 	}
 	return config->checksum == xf16cam_config_checksum(config);
 }
 
+/* The integration block belongs to the variant named by the tag. Another
+ * variant's block, or a corrupt one, is cleared rather than failing the whole
+ * record, so an OTA between the mqtt and esphome images keeps the Wi-Fi
+ * settings and only the integration has to be set up again. */
+__xip_text
+static void xf16cam_config_adopt_block(XF16CamConfig *config)
+{
+	int clear = config->feature != XF16CAM_CONFIG_FEATURE;
+
+#ifdef XF16CAM_MQTT
+	if (!clear &&
+	    (config->u.mqtt.host[XF16CAM_MQTT_HOST_MAX_LEN] != '\0' ||
+	     config->u.mqtt.user[XF16CAM_MQTT_USER_MAX_LEN] != '\0' ||
+	     config->u.mqtt.pass[XF16CAM_MQTT_PASS_MAX_LEN] != '\0'))
+		clear = 1;
+#endif
+	if (!clear)
+		return;
+	printf("xf16cam config: integration block tag 0x%02x, image expects 0x%02x; cleared\n",
+	       (unsigned int)config->feature, (unsigned int)XF16CAM_CONFIG_FEATURE);
+	memset(&config->u, 0, sizeof(config->u));
+	memset(config->feature_pad, 0, sizeof(config->feature_pad));
+	config->feature = XF16CAM_CONFIG_FEATURE;
+	config->checksum = xf16cam_config_checksum(config);
+	if (fdcm_write(g_config_store, config, sizeof(*config)) != sizeof(*config))
+		printf("xf16cam config: block clear write failed; using RAM copy\n");
+}
+
 /* Read a 116-byte schema 1 or 2 record, validate it against its own layout,
- * and rebuild it as schema 3 with the MQTT settings cleared. Called once from
- * init before any task runs, so the stack buffer is safe. Returns 0 when a
- * migrated record is in *config. */
+ * and rebuild it as schema 3 with an empty integration block. Called once
+ * from init before any task runs, so the stack buffer is safe. Returns 0 when
+ * a migrated record is in *config. */
 __xip_text
 static int xf16cam_config_load_legacy(XF16CamConfig *config)
 {
@@ -119,7 +154,7 @@ static int xf16cam_config_load_legacy(XF16CamConfig *config)
 
 	/* The legacy prefix (magic .. psk) is byte-identical in schema 3. */
 	memset(config, 0, sizeof(*config));
-	memcpy(config, legacy, offsetof(XF16CamConfig, mqtt_interval_s));
+	memcpy(config, legacy, offsetof(XF16CamConfig, feature));
 	if (config->wifi_mode < XF16CAM_WIFI_AP ||
 	    config->wifi_mode > XF16CAM_WIFI_STA ||
 	    config->media_mode < XF16CAM_MEDIA_RTSP ||
@@ -137,6 +172,7 @@ static int xf16cam_config_load_legacy(XF16CamConfig *config)
 	config->reserved = 0;
 	config->schema = XF16CAM_CONFIG_SCHEMA;
 	config->length = sizeof(*config);
+	config->feature = XF16CAM_CONFIG_FEATURE;
 	config->checksum = xf16cam_config_checksum(config);
 	if (fdcm_write(g_config_store, config, sizeof(*config)) != sizeof(*config))
 		printf("xf16cam config: schema %u migration write failed; using RAM copy\n",
@@ -151,6 +187,7 @@ __xip_text
 int xf16cam_config_init(void)
 {
 	XF16CamConfig *config = &g_configs[0];
+	const char *block;
 
 	memset(g_configs, 0, sizeof(g_configs));
 	g_config_index = 0;
@@ -181,14 +218,19 @@ int xf16cam_config_init(void)
 		printf("xf16cam config: using defaults (AP mode)\n");
 		return 0;
 	}
+	xf16cam_config_adopt_block(config);
 
-	printf("xf16cam config: loaded schema=%u wifi=%s media=%s resolution=%s ssid=%s mqtt=%s\n",
+#ifdef XF16CAM_MQTT
+	block = config->u.mqtt.host[0] != '\0' ? config->u.mqtt.host : "mqtt off";
+#else
+	block = "none";
+#endif
+	printf("xf16cam config: loaded schema=%u wifi=%s media=%s resolution=%s ssid=%s integration=%s\n",
 	       config->schema,
 	       config->wifi_mode == XF16CAM_WIFI_STA ? "STA" : "AP",
 	       config->media_mode == XF16CAM_MEDIA_WEB ? "WEB" : "RTSP",
 	       config->resolution == XF16CAM_RESOLUTION_VGA ? "VGA" : "QVGA",
-	       config->ssid,
-	       config->mqtt_host[0] != '\0' ? config->mqtt_host : "off");
+	       config->ssid, block);
 	return 0;
 }
 
@@ -305,6 +347,7 @@ int xf16cam_config_save_resolution(XF16CamResolution resolution)
 	return result;
 }
 
+#ifdef XF16CAM_MQTT
 int xf16cam_config_save_mqtt(const char *host, uint16_t port, const char *user,
                              const char *pass, uint8_t interval_s)
 {
@@ -325,18 +368,17 @@ int xf16cam_config_save_mqtt(const char *host, uint16_t port, const char *user,
 		return -1;
 	}
 	config = *xf16cam_config_get();
-	memset(config.mqtt_host, 0, sizeof(config.mqtt_host));
-	memset(config.mqtt_user, 0, sizeof(config.mqtt_user));
-	memset(config.mqtt_pass, 0, sizeof(config.mqtt_pass));
-	memcpy(config.mqtt_host, host, host_len);
-	memcpy(config.mqtt_user, user, user_len);
-	memcpy(config.mqtt_pass, pass, pass_len);
-	config.mqtt_port = port;
-	config.mqtt_interval_s = interval_s;
+	memset(&config.u.mqtt, 0, sizeof(config.u.mqtt));
+	memcpy(config.u.mqtt.host, host, host_len);
+	memcpy(config.u.mqtt.user, user, user_len);
+	memcpy(config.u.mqtt.pass, pass, pass_len);
+	config.u.mqtt.port = port;
+	config.u.mqtt.interval_s = interval_s;
 	result = xf16cam_config_write(&config);
 	OS_MutexUnlock(&g_config_lock);
 	return result;
 }
+#endif
 
 int xf16cam_update_begin(void)
 {

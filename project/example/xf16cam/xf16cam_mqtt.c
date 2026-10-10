@@ -480,7 +480,7 @@ static int xf16cam_mqtt_connect(void)
 	int timeout = XF16CAM_MQTT_IO_TIMEOUT_MS;
 	int rc;
 
-	memcpy(host, config->mqtt_host, sizeof(host));
+	memcpy(host, config->u.mqtt.host, sizeof(host));
 	NewNetwork(&g_net);
 	rc = ConnectNetwork(&g_net, host, xf16cam_config_mqtt_port(config));
 	if (rc != 0) {
@@ -500,10 +500,10 @@ static int xf16cam_mqtt_connect(void)
 	data.clientID.cstring = (char *)xf16cam_net_hostname();
 	data.keepAliveInterval = XF16CAM_MQTT_KEEPALIVE_S;
 	data.cleansession = 1;
-	if (config->mqtt_user[0] != '\0')
-		data.username.cstring = (char *)config->mqtt_user;
-	if (config->mqtt_pass[0] != '\0')
-		data.password.cstring = (char *)config->mqtt_pass;
+	if (config->u.mqtt.user[0] != '\0')
+		data.username.cstring = (char *)config->u.mqtt.user;
+	if (config->u.mqtt.pass[0] != '\0')
+		data.password.cstring = (char *)config->u.mqtt.pass;
 	data.willFlag = 1;
 	data.will.topicName.cstring = g_topic_status;
 	data.will.message.cstring = (char *)g_text_offline;
@@ -659,7 +659,7 @@ static int xf16cam_mqtt_prepare(void)
 	}
 	g_topics_ready = 1;
 	XF16CAM_MQTT_LOG("xf16cam mqtt: broker %s:%u, image every %u s, id %s\n",
-	                 config->mqtt_host,
+	                 config->u.mqtt.host,
 	                 (unsigned int)xf16cam_config_mqtt_port(config),
 	                 (unsigned int)xf16cam_config_mqtt_interval(config), host);
 	return 0;
@@ -701,7 +701,7 @@ int xf16cam_mqtt_start(void)
 {
 	const XF16CamConfig *config = xf16cam_config_get();
 
-	if (config->mqtt_host[0] == '\0')
+	if (config->u.mqtt.host[0] == '\0')
 		return 0;
 	g_net.my_socket = -1;
 	g_info.enabled = 1;

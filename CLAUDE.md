@@ -281,16 +281,25 @@ makes it unique per board from a single firmware image, with no provisioning
 step and nothing an OTA or a reflash can overwrite. It doubles as the MQTT
 client id and topic id.
 
-`XF16CamConfig` is at schema 3 (220 bytes): the 116-byte schema 1/2 record
-plus the MQTT fields, which exist on every variant so an `_mqtt` and a plain
-image share one settings record. `xf16cam_config_storage_valid()` still
-rejects any record whose `length` differs from `sizeof(XF16CamConfig)`, and
+`XF16CamConfig` is at schema 3 (220 bytes): the 116-byte schema 1/2 record,
+then at offset 109 a `feature` tag naming the integration variant that wrote
+the record (`XF16CAM_FEATURE_NONE`, `_MQTT` = 'M', `_ESPHOME` = 'E') and at
+112 a 104-byte union holding that variant's block (`u.mqtt` on `_mqtt`
+builds). Every variant shares the one layout, but a record never holds more
+than one integration's fields: `xf16cam_config_adopt_block()` clears the
+block and rewrites the tag when it was written by a different variant or is
+corrupt, so an OTA between `_mqtt`, `_esphome` and plain images keeps Wi-Fi,
+media mode and resolution and only the integration has to be set up again.
+`xf16cam_config_storage_valid()` checks the shared prefix and still rejects
+any record whose `length` differs from `sizeof(XF16CamConfig)`;
 `xf16cam_config_load_legacy()` is what keeps that from resetting devices to
 AP mode: it reads a 116-byte record, checks it with its own checksum span,
-copies the byte-identical prefix and rewrites it as schema 3. Growing the
-struct again means the same dance (a new legacy length and checksum offset),
-not just a bumped constant. Flash is fully allocated (settings at 1016 KiB,
-SDK sysinfo at 1020 KiB), so there is no spare sector for anything else.
+copies the byte-identical prefix and rewrites it as schema 3. A block that
+outgrows 104 bytes cannot just grow the union: the FDCM reader refuses a read
+whose size differs from the stored record, so that needs a fixed-size
+envelope or a raw header read, plus the legacy dance (a new legacy length and
+checksum offset). Flash is fully allocated (settings at 1016 KiB, SDK sysinfo
+at 1020 KiB), so there is no spare sector for anything else.
 
 A missing or unsupported sensor is non-fatal by design: Wi-Fi, HTTP, OTA, audio,
 SD, and diagnostics all stay up while video reports the camera offline. Preserve
