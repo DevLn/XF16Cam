@@ -25,6 +25,7 @@
 #include "xf16cam_http.h"
 #include "xf16cam_media.h"
 #include "xf16cam_mqtt.h"
+#include "xf16cam_esphome.h"
 #include "xf16cam_net.h"
 #include "xf16cam_power.h"
 #include "xf16cam_sensor.h"
@@ -192,6 +193,12 @@ static void xf16cam_http_send_text(int fd, const char *text)
 	                     XF16CAM_XIP_JOIN(g_http_ms_, __LINE__)); \
 } while (0)
 
+/* Same, for a body built at runtime (the status is still a literal). */
+#define XF16CAM_HTTP_MESSAGE_TEXT(fd, status, text) do { \
+	__xip_rodata static const char XF16CAM_XIP_JOIN(g_http_st_, __LINE__)[] = status; \
+	xf16cam_http_message((fd), XF16CAM_XIP_JOIN(g_http_st_, __LINE__), (text)); \
+} while (0)
+
 __xip_text
 static void xf16cam_http_runtime(int fd, char *dynamic, size_t size)
 {
@@ -338,6 +345,39 @@ static void xf16cam_http_mqtt_card(int fd, const XF16CamConfig *config)
 	                            (unsigned long)mqtt->images,
 	                            (unsigned long)mqtt->disconnects);
 	xf16cam_http_send_all(fd, dynamic, (size_t)length);
+}
+#endif
+
+#ifdef XF16CAM_ESPHOME
+/* Second column of the Network tab. The key itself is never shown here:
+ * the page is unauthenticated like the setup AP. Generate shows it once in
+ * the response. */
+__xip_text
+static void xf16cam_http_esphome_card(int fd, const XF16CamConfig *config)
+{
+	const XF16CamEsphomeInfo *api = xf16cam_esphome_info();
+	char dynamic[160];
+	int length;
+
+	XF16CAM_HTTP_SEND_LITERAL(fd,
+	                  "<section class=card><h2>Home Assistant (ESPHome API)</h2>"
+	                  "<p>Native ESPHome API on port 6053: add the camera in Home Assistant by its IP address. "
+	                  "Home Assistant provisions the encryption key itself; a key can also be generated here (shown once) or cleared. "
+	                  "Runs in station mode only.</p>");
+	length = XF16CAM_XIP_FORMAT(dynamic, sizeof(dynamic),
+	                            "<p>Status: %s, %u client(s)%s, key %s, %lu frames sent, %lu rejected handshakes</p>",
+	                            api->state,
+	                            (unsigned int)api->clients,
+	                            api->encrypted ? " (encrypted)" : "",
+	                            xf16cam_config_esphome_key_set(config) ? "set" : "not set",
+	                            (unsigned long)api->frames,
+	                            (unsigned long)api->rejected);
+	xf16cam_http_send_all(fd, dynamic, (size_t)length);
+	XF16CAM_HTTP_SEND_LITERAL(fd,
+	                  "<form method=post action=/api/esphome><input type=hidden name=action value=generate>"
+	                  "<button type=submit>Generate key</button></form> "
+	                  "<form method=post action=/api/esphome><input type=hidden name=action value=clear>"
+	                  "<button type=submit>Clear key</button></form></section>");
 }
 #endif
 
@@ -520,9 +560,9 @@ static void xf16cam_http_page(int fd)
 	                  audio->active ? "AMIC active, PCMU/8000" : "AMIC ready (on demand)", audio->peak);
 	xf16cam_http_send_all(fd, dynamic, length);
 
-#ifdef XF16CAM_MQTT
-	/* The MQTT card takes the second grid column, so the Wi-Fi card is half
-	 * width here and keeps the full row on builds without MQTT. */
+#if defined(XF16CAM_MQTT) || defined(XF16CAM_ESPHOME)
+	/* The integration card takes the second grid column, so the Wi-Fi card
+	 * is half width here and keeps the full row on builds without one. */
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "<div id=network class=panel><section class=card><h2>Wi-Fi setup</h2>");
 #else
@@ -544,6 +584,9 @@ static void xf16cam_http_page(int fd)
 	                  "<form method=post action=/api/ap><button type=submit>Return to open AP</button></form></section>");
 #ifdef XF16CAM_MQTT
 	xf16cam_http_mqtt_card(fd, config);
+#endif
+#ifdef XF16CAM_ESPHOME
+	xf16cam_http_esphome_card(fd, config);
 #endif
 	XF16CAM_HTTP_SEND_LITERAL(fd,
 	                  "</div><div id=storage class=panel><section class='card wide'><h2>SD card</h2><div class=grid>"
@@ -596,6 +639,12 @@ static void xf16cam_http_page(int fd)
 	length = XF16CAM_XIP_FORMAT(dynamic, sizeof(dynamic),
 	                  "<b>MQTT stack spare</b><span>%lu bytes</span>",
 	                  (unsigned long)xf16cam_mqtt_stack_min_free());
+	xf16cam_http_send_all(fd, dynamic, length);
+#endif
+#ifdef XF16CAM_ESPHOME
+	length = XF16CAM_XIP_FORMAT(dynamic, sizeof(dynamic),
+	                  "<b>ESPHome stack spare</b><span>%lu bytes</span>",
+	                  (unsigned long)xf16cam_esphome_stack_min_free());
 	xf16cam_http_send_all(fd, dynamic, length);
 #endif
 	XF16CAM_HTTP_SEND_LITERAL(fd, "</div></section>");
@@ -852,6 +901,30 @@ static void xf16cam_http_system_json(int fd)
 		                  (unsigned long)mqtt->commands,
 		                  (unsigned long)mqtt->dropped,
 		                  (unsigned long)xf16cam_mqtt_stack_min_free()));
+	}
+#endif
+#ifdef XF16CAM_ESPHOME
+	{
+		const XF16CamEsphomeInfo *api = xf16cam_esphome_info();
+
+		/* The key is never reported. */
+		xf16cam_http_system_chunk(fd, body, sizeof(body),
+		                  XF16CAM_XIP_FORMAT(body, sizeof(body),
+		                  "\"esphome\":{\"state\":\"%s\",\"clients\":%u,\"encrypted\":%s,\"key\":%s,"
+		                  "\"connects\":%lu,\"disconnects\":%lu,\"frames\":%lu,\"states\":%lu,"
+		                  "\"commands\":%lu,\"dropped\":%lu,\"rejected\":%lu,\"stack\":%lu},",
+		                  api->state,
+		                  (unsigned int)api->clients,
+		                  api->encrypted ? "true" : "false",
+		                  xf16cam_config_esphome_key_set(config) ? "true" : "false",
+		                  (unsigned long)api->connects,
+		                  (unsigned long)api->disconnects,
+		                  (unsigned long)api->frames,
+		                  (unsigned long)api->states,
+		                  (unsigned long)api->commands,
+		                  (unsigned long)api->dropped,
+		                  (unsigned long)api->rejected,
+		                  (unsigned long)xf16cam_esphome_stack_min_free()));
 	}
 #endif
 	xf16cam_http_system_chunk(fd, body, sizeof(body),
@@ -1114,7 +1187,7 @@ static int xf16cam_http_handle(int fd)
 	uint32_t request_start = OS_TicksToMSecs(OS_GetTicks());
 	char ssid[XF16CAM_SSID_MAX_LEN + 1];
 	char psk[XF16CAM_PSK_MAX_LEN + 1];
-	char mode[8];
+	char mode[12];	/* longest form value: ESPHome "generate" */
 #ifdef XF16CAM_MQTT
 	char user[XF16CAM_MQTT_USER_MAX_LEN + 1];
 #endif
@@ -1279,6 +1352,38 @@ static int xf16cam_http_handle(int fd)
 		}
 		XF16CAM_HTTP_MESSAGE(fd, "200 OK", "MQTT settings saved. Rebooting...");
 		return XF16CAM_HTTP_COLD_REBOOT;
+#endif
+#ifdef XF16CAM_ESPHOME
+	} else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/esphome") == 0) {
+		/* No reboot: new connections pick the key up at once. */
+		if (xf16cam_form_value(body, "action", mode, sizeof(mode)) == 0 &&
+		    strcmp(mode, "generate") == 0) {
+			char key[XF16CAM_ESPHOME_KEY_B64_LEN];
+			char text[128];
+
+			if (xf16cam_esphome_generate_key(key, sizeof(key)) != 0) {
+				XF16CAM_HTTP_MESSAGE(fd, "500 Internal Server Error",
+				                     "Key generation failed.");
+				return XF16CAM_HTTP_KEEP_RUNNING;
+			}
+			XF16CAM_XIP_FORMAT(text, sizeof(text),
+			                   "Encryption key (shown once): %s", key);
+			XF16CAM_HTTP_MESSAGE_TEXT(fd, "200 OK", text);
+			return XF16CAM_HTTP_KEEP_RUNNING;
+		}
+		if (xf16cam_form_value(body, "action", mode, sizeof(mode)) == 0 &&
+		    strcmp(mode, "clear") == 0) {
+			if (xf16cam_esphome_clear_key() != 0) {
+				XF16CAM_HTTP_MESSAGE(fd, "500 Internal Server Error",
+				                     "Clearing the key failed.");
+				return XF16CAM_HTTP_KEEP_RUNNING;
+			}
+			XF16CAM_HTTP_MESSAGE(fd, "200 OK",
+			                     "Encryption key cleared. Home Assistant will provision a new one.");
+			return XF16CAM_HTTP_KEEP_RUNNING;
+		}
+		XF16CAM_HTTP_MESSAGE(fd, "400 Bad Request", "Unknown ESPHome action.");
+		return XF16CAM_HTTP_KEEP_RUNNING;
 #endif
 	} else if(strcmp(method, "POST") == 0 && strcmp(path, "/api/led") == 0) {
 		int led_on = xf16cam_form_value(body, "led_on", mode, sizeof(mode)) == 0 &&

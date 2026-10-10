@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     xz-utils \
+    libmbedtls-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install the Arm GNU Toolchain (matches carlosperate/arm-none-eabi-gcc-action@v1, release 8-2019-q3)
@@ -39,7 +40,19 @@ RUN cc -std=c11 -Wall -Wextra -Werror \
     tests/xf16cam/test_mqtt_payload.c \
     project/example/xf16cam/xf16cam_mqtt_payload.c \
     -o /tmp/xf16cam-mqtt-payload-test \
-    && /tmp/xf16cam-mqtt-payload-test
+    && /tmp/xf16cam-mqtt-payload-test \
+    && cc -std=c11 -Wall -Wextra -Werror \
+    -Iinclude -Iproject/example/xf16cam \
+    tests/xf16cam/test_esphome_proto.c \
+    project/example/xf16cam/xf16cam_esphome_proto.c \
+    -o /tmp/xf16cam-esphome-proto-test \
+    && /tmp/xf16cam-esphome-proto-test \
+    && cc -std=c11 -Wall -Wextra -Werror -DXF16CAM_NOISE_INITIATOR \
+    -Iinclude -Iproject/example/xf16cam \
+    tests/xf16cam/test_esphome_noise.c \
+    project/example/xf16cam/xf16cam_esphome_noise.c \
+    -lmbedcrypto -o /tmp/xf16cam-esphome-noise-test \
+    && /tmp/xf16cam-esphome-noise-test
 
 # Configure XR872 build
 RUN printf '%s\n' \
@@ -47,18 +60,28 @@ RUN printf '%s\n' \
     '__CONFIG_HOSC_TYPE ?= 40' > .config \
     && chmod +x tools/mkimage
 
+# _esphome builds need a third lwIP listen PCB (HTTP and RTSP hold the two
+# the SDK allows); the SDK header is patched here, on this copy of the tree,
+# not in git. See tools/xf16cam/patch_sdk.py.
+RUN case "$BUILD_VARIANT" in \
+    *_esphome) python3 tools/xf16cam/patch_sdk.py ;; \
+    esac
+
 # Build flash and OTA images. Pass BUILD_VARIANT=no_ptz for the fixed-camera
-# board; the default PTZ build leaves NO_PTZ undefined. The optional _mqtt
-# suffix (last) adds XF16CAM_MQTT, the Home Assistant MQTT client
-# (xf16cam_mqtt.c): ptz, no_ptz, ptz_mqtt, no_ptz_mqtt.
+# board; the default PTZ build leaves NO_PTZ undefined. One optional
+# integration suffix (last): _mqtt adds XF16CAM_MQTT, the Home Assistant MQTT
+# client (xf16cam_mqtt.c); _esphome adds XF16CAM_ESPHOME, the ESPHome native
+# API server (xf16cam_esphome.c). They are mutually exclusive: ptz, no_ptz,
+# ptz_mqtt, no_ptz_mqtt, ptz_esphome, no_ptz_esphome.
 RUN variant="$BUILD_VARIANT"; symbols=""; \
     case "$variant" in \
     *_mqtt) symbols="-DXF16CAM_MQTT"; variant="${variant%_mqtt}" ;; \
+    *_esphome) symbols="-DXF16CAM_ESPHOME"; variant="${variant%_esphome}" ;; \
     esac; \
     case "$variant" in \
     ptz) ;; \
     no_ptz) symbols="-DNO_PTZ $symbols" ;; \
-    *) echo "Invalid BUILD_VARIANT: $BUILD_VARIANT (use ptz or no_ptz, optionally with _mqtt)" >&2; exit 1 ;; \
+    *) echo "Invalid BUILD_VARIANT: $BUILD_VARIANT (use ptz or no_ptz, optionally with _mqtt or _esphome)" >&2; exit 1 ;; \
     esac \
     && make -C project/example/xf16cam/gcc \
     CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" \
@@ -72,11 +95,12 @@ RUN variant="$BUILD_VARIANT"; symbols=""; \
 # stay compiled in on both variants: hal_flashctrl.c keys its SBUS re-init
 # workaround (FLASHC_TEMP_FIXED) to CONFIG_PM, and without it the first flash
 # write -- an OTA piece or a settings save -- hangs the device.
-# The MQTT sentinel proves the client is present only on _mqtt builds and,
-# when present, executes from XIP.
+# The integration sentinels prove each client is present only on its own
+# builds and, when present, executes from XIP.
 RUN case "$BUILD_VARIANT" in \
-    *_mqtt) mqtt_check="--require-xip xf16cam_mqtt_task" ;; \
-    *) mqtt_check="--require-absent xf16cam_mqtt_task" ;; \
+    *_mqtt) integration_check="--require-xip xf16cam_mqtt_task --require-absent xf16cam_esphome_task" ;; \
+    *_esphome) integration_check="--require-xip xf16cam_esphome_task --require-xip mbedtls_chachapoly_encrypt_and_tag --require-absent xf16cam_mqtt_task" ;; \
+    *) integration_check="--require-absent xf16cam_mqtt_task --require-absent xf16cam_esphome_task" ;; \
     esac \
     && python3 tools/xf16cam/check_symbol_placement.py \
     --elf project/example/xf16cam/gcc/xf16cam.axf \
@@ -86,13 +110,15 @@ RUN case "$BUILD_VARIANT" in \
     --require-xip xf16cam_http_start \
     --require-absent dns_table \
     --require-absent igmp_group_list \
-    $mqtt_check
+    $integration_check
 
 # Check 1 MiB flash budget. The Paho client and the discovery document cost
 # about 12 KB of XIP, more than the headroom above the 64 KiB floor, so
-# _mqtt builds keep a 56 KiB XIP reserve instead.
+# _mqtt builds keep a 56 KiB XIP reserve instead; the ESPHome server costs
+# about the same plus ChaCha20-Poly1305 and gets 48 KiB.
 RUN case "$BUILD_VARIANT" in \
     *_mqtt) xip_reserve=56K ;; \
+    *_esphome) xip_reserve=48K ;; \
     *) xip_reserve=64K ;; \
     esac \
     && mkdir -p dist \
@@ -100,7 +126,9 @@ RUN case "$BUILD_VARIANT" in \
     --config project/example/xf16cam/image/xr872/image_auto_cal.cfg \
     --image-dir project/example/xf16cam/image/xr872 \
     --xip-reserve "$xip_reserve" \
-    | tee dist/image-budget.txt
+    > dist/image-budget.txt; rc=$?; cat dist/image-budget.txt; test "$rc" -eq 0
+# (no pipefail in /bin/sh: a tee pipe would hide a failed check behind tee's
+# status, which let an over-budget image through once)
 
 # Package flash image
 RUN version="$(sed -n 's/^#define XF16CAM_VERSION "\([^"]*\)"/\1/p' \

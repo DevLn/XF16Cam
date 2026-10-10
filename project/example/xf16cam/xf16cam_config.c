@@ -39,6 +39,10 @@ _Static_assert(sizeof(((XF16CamConfig *)0)->u) == XF16CAM_CONFIG_BLOCK_SIZE,
 _Static_assert(sizeof(XF16CamMqttConfig) == XF16CAM_CONFIG_BLOCK_SIZE,
 	       "XF16Cam MQTT block must fill the integration block");
 #endif
+#ifdef XF16CAM_ESPHOME
+_Static_assert(sizeof(XF16CamEsphomeConfig) <= XF16CAM_CONFIG_BLOCK_SIZE,
+	       "XF16Cam ESPHome block must fit the integration block");
+#endif
 _Static_assert(offsetof(XF16CamConfig, checksum) == 216,
 	       "XF16Cam checksum offset changed");
 
@@ -111,6 +115,10 @@ static void xf16cam_config_adopt_block(XF16CamConfig *config)
 	    (config->u.mqtt.host[XF16CAM_MQTT_HOST_MAX_LEN] != '\0' ||
 	     config->u.mqtt.user[XF16CAM_MQTT_USER_MAX_LEN] != '\0' ||
 	     config->u.mqtt.pass[XF16CAM_MQTT_PASS_MAX_LEN] != '\0'))
+		clear = 1;
+#endif
+#ifdef XF16CAM_ESPHOME
+	if (!clear && (config->u.esphome.flags & ~XF16CAM_ESPHOME_KEY_SET) != 0)
 		clear = 1;
 #endif
 	if (!clear)
@@ -222,6 +230,9 @@ int xf16cam_config_init(void)
 
 #ifdef XF16CAM_MQTT
 	block = config->u.mqtt.host[0] != '\0' ? config->u.mqtt.host : "mqtt off";
+#elif defined(XF16CAM_ESPHOME)
+	block = xf16cam_config_esphome_key_set(config) ? "esphome (key set)" :
+	                                                 "esphome (no key)";
 #else
 	block = "none";
 #endif
@@ -374,6 +385,30 @@ int xf16cam_config_save_mqtt(const char *host, uint16_t port, const char *user,
 	memcpy(config.u.mqtt.pass, pass, pass_len);
 	config.u.mqtt.port = port;
 	config.u.mqtt.interval_s = interval_s;
+	result = xf16cam_config_write(&config);
+	OS_MutexUnlock(&g_config_lock);
+	return result;
+}
+#endif
+
+#ifdef XF16CAM_ESPHOME
+int xf16cam_config_save_esphome_key(const uint8_t *key)
+{
+	XF16CamConfig config;
+	int result;
+
+	if (!g_config_lock_ready || OS_MutexLock(&g_config_lock, OS_WAIT_FOREVER) != OS_OK)
+		return -1;
+	if (g_update_active) {
+		OS_MutexUnlock(&g_config_lock);
+		return -1;
+	}
+	config = *xf16cam_config_get();
+	memset(&config.u.esphome, 0, sizeof(config.u.esphome));
+	if (key != NULL) {
+		memcpy(config.u.esphome.key, key, sizeof(config.u.esphome.key));
+		config.u.esphome.flags = XF16CAM_ESPHOME_KEY_SET;
+	}
 	result = xf16cam_config_write(&config);
 	OS_MutexUnlock(&g_config_lock);
 	return result;

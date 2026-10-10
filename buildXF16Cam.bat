@@ -2,8 +2,9 @@
 set "BUILD_VARIANT=%~1"
 if "%BUILD_VARIANT%"=="" set "BUILD_VARIANT=ptz"
 set "BASE_VARIANT=%BUILD_VARIANT:_mqtt=%"
+set "BASE_VARIANT=%BASE_VARIANT:_esphome=%"
 if /I not "%BASE_VARIANT%"=="ptz" if /I not "%BASE_VARIANT%"=="no_ptz" (
-	echo Usage: %~nx0 [ptz^|no_ptz][_mqtt]   e.g. ptz, no_ptz_mqtt
+	echo Usage: %~nx0 [ptz^|no_ptz][_mqtt^|_esphome]   e.g. ptz, no_ptz_mqtt, ptz_esphome
 	exit /b 1
 )
 

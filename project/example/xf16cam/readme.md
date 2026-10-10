@@ -202,6 +202,35 @@ appears as one device with no custom component installed:
   viewers pause for that moment. Publishing an image every 10 s keeps the
   sensor powered; intervals above 20 s power it per shot.
 
+## Home Assistant via the ESPHome API (`_esphome` builds)
+
+Images built with the `_esphome` suffix (`buildXF16Cam.bat ptz_esphome`)
+carry an ESPHome native API server instead of the MQTT client (one image
+never has both), so Home Assistant's core ESPHome integration talks to the
+camera directly, with no broker:
+
+- Add the device in Home Assistant with **Add integration > ESPHome** and
+  the camera's IP address and port 6053. There is no mDNS (IGMP is linked
+  out), so give the camera a DHCP reservation. Home Assistant generates and
+  provisions the encryption key itself on the first connection; the Network
+  tab card can also generate a key (shown once, to paste into Home
+  Assistant) or clear it. A keyed camera refuses plaintext.
+- Entities match the MQTT discovery set: the camera (browser-video mode),
+  the flash and IR lights, PTZ buttons, a reboot button under Configuration
+  and the diagnostic sensors (IP, uptime, chip temperature, free heap, media
+  mode, resolution, stream URL, battery, boot reason, SD card, sensor), with
+  the same ones created disabled. States are pushed on change and every
+  60 s.
+- The camera entity is Home Assistant's own frame-by-frame view: each
+  request yields one JPEG, so the live view runs at whatever rate the
+  request round trip allows, and snapshots work without a stream. The RTSP
+  stream is still the way to get real video (generic camera or go2rtc), as
+  with the MQTT build.
+- Up to two clients. Runs in station mode only; the task retires in AP mode.
+- `tools/xf16cam/esphome_check.py` (needs `pip install aioesphomeapi`)
+  lists entities, follows states, saves an image, measures stream frame
+  rate, toggles lights, presses buttons and provisions or clears the key.
+
 ## 1 MiB flash layout
 
 - `0-32 KiB`: bootloader and reserved space
@@ -222,7 +251,8 @@ bootable. Do not upload the full serial image through the web page.
 
 CI additionally requires at least 8 KiB free in the SRAM-loaded app slot and
 64 KiB free in both the XIP and compressed-OTA areas (56 KiB of XIP on
-`_mqtt` builds, which carry the Paho client). This prevents ordinary
+`_mqtt` builds, which carry the Paho client, 48 KiB on `_esphome` builds,
+which carry the API server and ChaCha20-Poly1305). This prevents ordinary
 feature growth from silently consuming the final usable bytes. A symbol-placement
 check also requires the flash identity query to remain in SRAM and uninlined,
 preventing code from disabling XIP while it is executing from flash.

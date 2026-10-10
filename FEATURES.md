@@ -32,7 +32,8 @@ means it is currently on). Those two endpoints exist only for external clients.
 Legend: OK = supported, "-" = not exposed there.
 UI = visible or actionable in the web console. API = has a dedicated endpoint.
 Variant: *PTZ* = PTZ boards only, *NO_PTZ* = fixed-camera boards only,
-*MQTT* = `_mqtt` builds only (`XF16CAM_MQTT`), blank = both boards.
+*MQTT* = `_mqtt` builds only (`XF16CAM_MQTT`), *ESPHome* = `_esphome` builds
+only (`XF16CAM_ESPHOME`), blank = both boards.
 
 | Feature | UI | API | Endpoint / control | Variant | Notes |
 | --- | :--: | :--: | --- | :--: | --- |
@@ -52,6 +53,11 @@ Variant: *PTZ* = PTZ boards only, *NO_PTZ* = fixed-camera boards only,
 | MQTT commands | - | - | `xf16cam/<host>/cmd/led`, `/ir`, `/ptz`, `/reboot` | MQTT | `ON`/`OFF`, `up\|down\|left\|right\|home`, `PRESS` |
 | Home Assistant discovery | - | - | `homeassistant/device/<host>/config` | MQTT | One device (MAC connection, model `XR872 PTZ`/`XR872 A9`, sensor as hardware): camera (web mode), Flash/IR lights, PTZ buttons, reboot (config), diagnostic sensors incl. boot reason; the IR light and every diagnostic except IP, resolution and stream URL are created disabled; re-sent on HA's birth message |
 | MQTT diagnostics | OK | OK | Network tab, System tab, `/api/system` (`mqtt`) | MQTT | Connection state, connect/image/state/command counters, dropped packets, task stack spare |
+| ESPHome native API | - | OK | TCP 6053 | ESPHome | Home Assistant's ESPHome integration connects directly (add by IP; no mDNS); plaintext or Noise encryption; API version 1.10; up to 2 clients; station mode only |
+| ESPHome entities | - | - | ESPHome API | ESPHome | Same set as MQTT discovery: camera (web mode), Flash/IR lights, PTZ buttons, reboot (config), diagnostic binary/text/numeric sensors; states pushed on change and every 60 s |
+| ESPHome camera frames | - | - | ESPHome API `CameraImageRequest` | ESPHome | One JPEG per request in 1390-byte chunks; the camera stays held while a stream request is under 5 s old; web media mode only |
+| ESPHome encryption key | OK | OK | `POST /api/esphome` (`action=generate\|clear`) | ESPHome | Home Assistant provisions a key itself on first connect; the Network tab card can generate one (shown once) or clear it; no reboot |
+| ESPHome diagnostics | OK | OK | Network tab, System tab, `/api/system` (`esphome`) | ESPHome | Task state, client count, encryption and key state, connect/frame/state/command counters, dropped messages, rejected handshakes, task stack spare |
 | White/illumination LED state | OK | OK | `GET /api/led` | PTZ | UI shows it as the button label; GET endpoint unused by the page |
 | Toggle white/illumination LED | OK | OK | `POST /api/led` | PTZ | API works on both variants; button renders on PTZ only |
 | IR LED state | OK | OK | `GET /api/ir_led` | PTZ | UI shows it as the button label; GET endpoint unused by the page |

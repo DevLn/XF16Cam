@@ -48,6 +48,18 @@ typedef struct {
 	uint8_t reserved[5];
 } XF16CamMqttConfig;
 
+/* ESPHome native API settings. The key is the Noise pre-shared key Home
+ * Assistant provisions (or the console generates); without it the API runs
+ * in plaintext and advertises itself as provisionable. Port fixed at 6053. */
+#define XF16CAM_ESPHOME_KEY_LEN   (32)
+#define XF16CAM_ESPHOME_KEY_SET   (0x01U)	/* flags bit */
+
+typedef struct {
+	uint8_t key[XF16CAM_ESPHOME_KEY_LEN];
+	uint8_t flags;
+	uint8_t reserved[3];
+} XF16CamEsphomeConfig;
+
 typedef enum {
 	XF16CAM_WIFI_AP = 1,
 	XF16CAM_WIFI_STA = 2,
@@ -88,6 +100,9 @@ typedef struct {
 #ifdef XF16CAM_MQTT
 		XF16CamMqttConfig mqtt;
 #endif
+#ifdef XF16CAM_ESPHOME
+		XF16CamEsphomeConfig esphome;
+#endif
 		uint8_t raw[XF16CAM_CONFIG_BLOCK_SIZE];
 	} u;
 	uint32_t checksum;
@@ -115,6 +130,16 @@ static inline uint8_t xf16cam_config_mqtt_interval(const XF16CamConfig *config)
 {
 	return config->u.mqtt.interval_s != 0 ? config->u.mqtt.interval_s :
 	                                        XF16CAM_MQTT_DEFAULT_INTERVAL_S;
+}
+#endif
+
+#ifdef XF16CAM_ESPHOME
+/* key is XF16CAM_ESPHOME_KEY_LEN bytes, or NULL to clear it. */
+int xf16cam_config_save_esphome_key(const uint8_t *key);
+
+static inline int xf16cam_config_esphome_key_set(const XF16CamConfig *config)
+{
+	return (config->u.esphome.flags & XF16CAM_ESPHOME_KEY_SET) != 0;
 }
 #endif
 

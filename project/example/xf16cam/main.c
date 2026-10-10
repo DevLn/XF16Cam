@@ -25,6 +25,7 @@
 #include "xf16cam_config.h"
 #include "xf16cam_audio.h"
 #include "xf16cam_board.h"
+#include "xf16cam_esphome.h"
 #include "xf16cam_http.h"
 #include "xf16cam_media.h"
 #include "xf16cam_mqtt.h"
@@ -1179,10 +1180,13 @@ int main(void)
 		printf("xf16cam media rail: initialization failed\n");
 	if (xf16cam_config_init() != 0)
 		printf("xf16cam config: persistence unavailable\n");
-	/* The MQTT task sleeps until the network is up and retires itself in
-	 * AP mode, so it can be created before the network exists. */
+	/* The MQTT and ESPHome tasks (one per build) sleep until the network is
+	 * up and retire themselves in AP mode, so they can be created before the
+	 * network exists. */
 	if (xf16cam_mqtt_start() != 0)
 		printf("xf16cam mqtt: start failed; management remains available\n");
+	if (xf16cam_esphome_start() != 0)
+		printf("xf16cam esphome: start failed; management remains available\n");
 
 	/* Probe once so management can report the sensor, then release the rail
 	 * after services start. Stream clients reacquire it; the capture arena
