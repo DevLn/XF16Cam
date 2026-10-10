@@ -1,0 +1,25 @@
+From 083f194091c3248bc9e52887a42d1bf2bb78c01c Mon Sep 17 00:00:00 2001
+From: Gergo Olah <gergox.info@gmail.com>
+Date: Fri, 11 Sep 2026 18:21:39 +0200
+Subject: [PATCH] add __attribute__((weak)) for vApplicationStackOverflowHook
+
+---
+ src/kernel/os/FreeRTOS/os_thread.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/kernel/os/FreeRTOS/os_thread.c b/src/kernel/os/FreeRTOS/os_thread.c
+index 51fa71a..fc50c51 100644
+--- a/src/kernel/os/FreeRTOS/os_thread.c
++++ b/src/kernel/os/FreeRTOS/os_thread.c
+@@ -140,7 +140,7 @@ uint32_t OS_ThreadGetStackMinFreeSize(OS_Thread_t *thread)
+ #endif
+ 
+ #if (configCHECK_FOR_STACK_OVERFLOW > 0)
+-void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
++__attribute__((weak)) void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+ {
+ 	OS_ERR("task %p(%s) stack over flow\n", xTask, pcTaskName);
+ 	OS_ABORT();
+-- 
+2.44.0.windows.1
+

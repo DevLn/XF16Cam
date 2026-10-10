@@ -41,6 +41,9 @@ RUN printf '%s\n' \
     '__CONFIG_HOSC_TYPE ?= 40' > .config \
     && chmod +x tools/mkimage
 
+# Apply os_thread.c.patch
+RUN patch -p1 < patches/os_thread.c.patch
+
 # Build flash and OTA images. Pass BUILD_VARIANT=no_ptz for the fixed-camera
 # board; the default PTZ build leaves NO_PTZ undefined. Optional suffixes, in
 # this order: _talk adds XF16CAM_TALK, the RTSP audio backchannel to the

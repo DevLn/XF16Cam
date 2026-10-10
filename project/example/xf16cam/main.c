@@ -1227,6 +1227,7 @@ static void __attribute__((noreturn)) xf16cam_idle(void)
 
 int main(void)
 {
+	xf16cam_board_check_previous_crash();
 	int board_ready;
 	int camera_ready;
 	int rtsp_server = -1;

@@ -523,10 +523,12 @@ static void xf16cam_http_page(int fd)
 	length = XF16CAM_XIP_FORMAT(dynamic, sizeof(dynamic),
 	                  "<b>HTTP stack spare</b><span>%lu bytes</span>"
 	                  "<b>Audio stack spare</b><span>%lu bytes</span>"
-	                  "<b>Board stack spare</b><span>%lu bytes</span></div></section>",
+	                  "<b>Board stack spare</b><span>%lu bytes</span>"
+					  "<b>Crash task name</b><span>%s</span></div></section>",
 	                  (unsigned long)OS_ThreadGetStackMinFreeSize(&g_http_thread),
 	                  (unsigned long)xf16cam_audio_stack_min_free(),
-	                  (unsigned long)xf16cam_board_stack_min_free());
+	                  (unsigned long)xf16cam_board_stack_min_free(),
+					  xf16cam_board_get_crash_task_name());
 	xf16cam_http_send_all(fd, dynamic, length);
 	xf16cam_http_runtime(fd, dynamic, sizeof(dynamic));
 
@@ -1003,6 +1005,7 @@ static int xf16cam_http_ota(int fd, char *body, int body_length, int content_len
 		                     "Active media could not stop safely. Close stream clients and try again.");
 		return XF16CAM_HTTP_KEEP_RUNNING;
 	}
+	HAL_WDG_Stop();
 	if (ota_push_init() != OTA_STATUS_OK || ota_push_start() != OTA_STATUS_OK)
 		goto fail;
 	upload_start = OS_TicksToMSecs(OS_GetTicks());
