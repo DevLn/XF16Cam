@@ -85,10 +85,11 @@ WARNING_FLAGS := -Werror
 endif
 
 CC_FLAGS = $(CPU) -c $(DBG_FLAG) -fno-common -fmessage-length=0 \
-	-fno-exceptions -ffunction-sections -fdata-sections -fomit-frame-pointer \
+	-fno-exceptions -ffunction-sections -fdata-sections \
+	-fstack-protector-strong \
 	-Wall $(WARNING_FLAGS) -Wpointer-arith -Wno-error=unused-function \
 	-MMD -MP $(OPTIMIZE_FLAG)
-
+	
 LD_FLAGS = $(CPU) -Wl,--gc-sections --specs=nano.specs \
 	-Wl,-Map=$(basename $@).map,--cref
 

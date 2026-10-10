@@ -18,12 +18,14 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        build_variant: [ptz, no_ptz, ptz_mqtt, no_ptz_mqtt]
+        build_variant: [ptz, no_ptz, ptz_netlog, ptz_mqtt, no_ptz_mqtt]
     env:
       BUILD_VARIANT: ${{ matrix.build_variant }}
-      # _mqtt adds XF16CAM_MQTT, the Home Assistant MQTT client. Keep this
-      # mapping in step with the Dockerfile.
-      PRJ_EXTRA_SYMBOLS: ${{ startsWith(matrix.build_variant, 'no_ptz') && '-DNO_PTZ ' || '' }}${{ contains(matrix.build_variant, '_mqtt') && '-DXF16CAM_MQTT' || '' }}
+      # _netlog adds XF16CAM_NETLOG, the UDP console mirror; _mqtt (last) adds
+      # XF16CAM_MQTT, the Home Assistant MQTT client. Suffixes combine, so
+      # every test uses contains(), not endsWith(). Keep this mapping in step
+      # with the Dockerfile.
+      PRJ_EXTRA_SYMBOLS: ${{ startsWith(matrix.build_variant, 'no_ptz') && '-DNO_PTZ ' || '' }}${{ contains(matrix.build_variant, '_netlog') && '-DXF16CAM_NETLOG ' || '' }}${{ contains(matrix.build_variant, '_mqtt') && '-DXF16CAM_MQTT' || '' }}
 
     steps:
       - name: Check out source
@@ -61,7 +63,10 @@ jobs:
             '__CONFIG_CHIP_TYPE ?= xr872' \
             '__CONFIG_HOSC_TYPE ?= 40' > .config
           chmod +x tools/mkimage
-
+      - name: Apply os_thread.c.patch
+        shell: bash
+        run: |
+          patch -p1 < patches/os_thread.c.patch
       - name: Build flash image
         shell: bash
         run: |

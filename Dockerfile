@@ -47,18 +47,26 @@ RUN printf '%s\n' \
     '__CONFIG_HOSC_TYPE ?= 40' > .config \
     && chmod +x tools/mkimage
 
+# Apply os_thread.c.patch
+RUN patch -p1 < patches/os_thread.c.patch
+
 # Build flash and OTA images. Pass BUILD_VARIANT=no_ptz for the fixed-camera
-# board; the default PTZ build leaves NO_PTZ undefined. The optional _mqtt
-# suffix (last) adds XF16CAM_MQTT, the Home Assistant MQTT client
-# (xf16cam_mqtt.c): ptz, no_ptz, ptz_mqtt, no_ptz_mqtt.
+# board; the default PTZ build leaves NO_PTZ undefined. Optional suffixes, in
+# this order: _netlog adds XF16CAM_NETLOG, the UDP console mirror (see
+# xf16cam_log.c); _mqtt adds XF16CAM_MQTT, the Home Assistant MQTT client
+# (xf16cam_mqtt.c). So ptz, no_ptz, ptz_netlog, ptz_mqtt, ptz_netlog_mqtt and
+# the no_ptz equivalents.
 RUN variant="$BUILD_VARIANT"; symbols=""; \
     case "$variant" in \
     *_mqtt) symbols="-DXF16CAM_MQTT"; variant="${variant%_mqtt}" ;; \
     esac; \
     case "$variant" in \
+    *_netlog) symbols="-DXF16CAM_NETLOG $symbols"; variant="${variant%_netlog}" ;; \
+    esac; \
+    case "$variant" in \
     ptz) ;; \
     no_ptz) symbols="-DNO_PTZ $symbols" ;; \
-    *) echo "Invalid BUILD_VARIANT: $BUILD_VARIANT (use ptz or no_ptz, optionally with _mqtt)" >&2; exit 1 ;; \
+    *) echo "Invalid BUILD_VARIANT: $BUILD_VARIANT (use ptz or no_ptz, optionally with _netlog and/or _mqtt)" >&2; exit 1 ;; \
     esac \
     && make -C project/example/xf16cam/gcc \
     CC_DIR="$(dirname "$(command -v arm-none-eabi-gcc)")" \
